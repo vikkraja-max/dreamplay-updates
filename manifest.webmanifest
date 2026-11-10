@@ -1,0 +1,11 @@
+{
+  "name": "Monstermon: Wildfold",
+  "short_name": "Monstermon",
+  "start_url": "adventure.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#04060c",
+  "theme_color": "#0a1022",
+  "icons": [{ "src": "icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }]
+}

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 300">
+  <defs>
+    <linearGradient id="fold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3ad0ff"/><stop offset=".5" stop-color="#8a7dff"/><stop offset="1" stop-color="#ff5ad6"/></linearGradient>
+    <linearGradient id="txt" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset=".55" stop-color="#cfe9ff"/><stop offset="1" stop-color="#8fb6ff"/></linearGradient>
+    <radialGradient id="eye" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#fff6c8"/><stop offset=".45" stop-color="#ffd34d"/><stop offset="1" stop-color="#ff7a1a"/></radialGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#000" flood-opacity=".6"/></filter>
+  </defs>
+  <!-- the FoldCube monster: an isometric cube with a glowing slit eye and fangs -->
+  <g transform="translate(320 98)" filter="url(#soft)">
+    <polygon points="0,-72 66,-36 0,0 -66,-36" fill="#1a2348" stroke="url(#fold)" stroke-width="5" stroke-linejoin="round"/>
+    <polygon points="-66,-36 0,0 0,74 -66,38" fill="#121a36" stroke="url(#fold)" stroke-width="5" stroke-linejoin="round"/>
+    <polygon points="66,-36 0,0 0,74 66,38" fill="#0c1228" stroke="url(#fold)" stroke-width="5" stroke-linejoin="round"/>
+    <!-- fold seams -->
+    <path d="M-33,-54 L33,-18 M33,-54 L-33,-18" stroke="#6fe3ff" stroke-width="2.5" opacity=".7" filter="url(#glow)"/>
+    <!-- horns -->
+    <path d="M-46,-48 C-62,-82 -86,-92 -98,-90 C-82,-80 -70,-66 -60,-42 Z" fill="#ff5ad6" filter="url(#glow)"/>
+    <path d="M46,-48 C62,-82 86,-92 98,-90 C82,-80 70,-66 60,-42 Z" fill="#3ad0ff" filter="url(#glow)"/>
+    <!-- slit eye on the left face -->
+    <g transform="translate(-33 22) skewY(28)">
+      <ellipse cx="0" cy="0" rx="22" ry="13" fill="url(#eye)" filter="url(#glow)"/>
+      <ellipse cx="0" cy="0" rx="4" ry="12" fill="#120a06"/>
+      <path d="M-26,-14 L22,-22" stroke="#05070d" stroke-width="5" stroke-linecap="round"/>
+    </g>
+    <!-- fangs on the right face -->
+    <g transform="translate(33 34) skewY(-28)">
+      <path d="M-24,0 L24,0 L18,6 L12,22 L6,6 L0,6 L-6,26 L-12,6 L-18,6 Z" fill="#f2ead8"/>
+      <path d="M-26,-2 L26,-2" stroke="#ff5ad6" stroke-width="3" filter="url(#glow)"/>
+    </g>
+    <circle cx="0" cy="0" r="5" fill="#ffffff" filter="url(#glow)"/>
+  </g>
+  <!-- wordmark -->
+  <text x="320" y="232" text-anchor="middle" font-family="Segoe UI Black, Arial Black, sans-serif" font-size="66" font-weight="900" letter-spacing="2" fill="url(#txt)" stroke="#05070d" stroke-width="3" paint-order="stroke" filter="url(#soft)">MONSTERMON</text>
+  <g transform="translate(320 276)">
+    <rect x="-112" y="-22" width="224" height="34" rx="17" fill="#0a1022" stroke="url(#fold)" stroke-width="2.5"/>
+    <text x="0" y="3" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="800" letter-spacing="10" fill="url(#fold)">WILDFOLD</text>
+  </g>
+</svg>
