@@ -1,7 +1,9 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "notes": [
-    "First tablet version of dreamPlay"
+    "New Monstermon logo and start screen",
+    "Tutorial for new players (you can skip it)",
+    "Round map and cleaner screen"
   ],
-  "size": 405348
+  "size": 561837
 }
