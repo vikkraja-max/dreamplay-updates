@@ -1,7 +1,7 @@
 /* dreamPlay offline mode: when the game runs inside the tablet app (no PC server), every /api/ call is answered
    from the tablet's own storage (localStorage). On the PC (127.0.0.1) this file does nothing. It also turns
    finger touches into mouse events for the Tower Defense editor, so painting the map works with a finger. */
-window.DP_VERSION = '1.0.2';   // bump this for every update you send to the tablet
+window.DP_VERSION = '1.0.3';   // bump this for every update you send to the tablet
 (function () {
   // ---- in-app updates (tablet app only): "New update! Install? YES / NO" -> downloads, installs, restarts by itself
   window.dpUpdateInfo = (info) => {

@@ -11,6 +11,7 @@ export const OPTIONS = {
   shoes: [['sneaker', 'Sneakers'], ['high', 'High-tops'], ['boots', 'Boots']],
   glasses: [['none', 'No glasses'], ['sun', 'Sunglasses']],
   scarf: [['none', 'No scarf'], ['scarf', 'Scarf']],
+  back: [['none', 'Nothing'], ['cape', 'Hero cape'], ['wings', 'Dragon wings'], ['jetpack', 'Jetpack'], ['halo', 'Golden halo']],
   bag: [['none', 'No bag'], ['backpack', 'Backpack']],
   colors: ['#1e90ff', '#e53950', '#3ddc84', '#ffd34d', '#ff8c1a', '#8a5ad6', '#111827', '#f5f5f5', '#00c2c7', '#ff7eb6'],
 };
@@ -28,7 +29,7 @@ export function randomAvatar() {
 export const DEFAULT_AVATAR = {
   skin: '#f1c27d', hairStyle: 'short', hairColor: '#5a3a1c', hat: 'cap', hatColor: '#1e90ff', top: 'hoodie', topColor: '#111827', top2: '#1e90ff',
   pants: 'shorts', pantsColor: '#2f4f8f', shoes: 'sneaker', shoeColor: '#e53950', bag: 'backpack', bagColor: '#ffd34d',
-  glasses: 'none', scarf: 'none', scarfColor: '#e53950',
+  glasses: 'none', scarf: 'none', scarfColor: '#e53950', back: 'none', backColor: '#e53950',
 };
 
 const geo = new THREE.BoxGeometry(1, 1, 1);
@@ -141,6 +142,10 @@ export function buildAvatar(a) {
     if (a.hat === 'wizard') { const c = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.7, 8), mat('#5a2ab0')); c.position.y = 0.38; c.castShadow = true; hat.add(c); b(0.68, 0.04, 0.68, '#5a2ab0', 0, 0.02, 0, hat); b(0.06, 0.06, 0.02, '#ffd34d', 0.08, 0.35, 0.2, hat); }
     if (a.hat === 'winter') { b(0.5, 0.22, 0.46, hcol, 0, 0.07, 0, hat); b(0.52, 0.08, 0.48, '#f5f5f5', 0, -0.04, 0, hat); b(0.14, 0.14, 0.14, '#f5f5f5', 0, 0.25, 0, hat); }
   }
+  if (a.back === 'cape') { const cape = b(0.52, 0.85, 0.04, a.backColor || '#e53950', 0, 0.78, -0.2, body); cape.rotation.x = 0.12; b(0.54, 0.06, 0.06, '#ffd34d', 0, 1.2, -0.17, body); }
+  if (a.back === 'wings') for (const s of [-1, 1]) { const w = new THREE.Group(); w.position.set(s * 0.16, 1.0, -0.22); body.add(w); for (let k = 0; k < 3; k++) { const p = b(0.45 - k * 0.08, 0.05, 0.3 - k * 0.05, k % 2 ? '#3a1a5a' : '#6a2ab0', s * (0.22 + k * 0.18), k * 0.1, -k * 0.04, w); p.rotation.z = s * (0.35 + k * 0.15); } }
+  if (a.back === 'jetpack') { for (const s of [-1, 1]) { b(0.16, 0.42, 0.16, '#b8c2cc', s * 0.1, 0.9, -0.26, body); b(0.12, 0.12, 0.12, '#ff7a1a', s * 0.1, 0.63, -0.26, body); } b(0.34, 0.08, 0.1, '#5a606c', 0, 1.1, -0.22, body); }
+  if (a.back === 'halo') { const h = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.03, 6, 20), new THREE.MeshStandardMaterial({ color: '#ffd34d', emissive: '#ffb020', emissiveIntensity: 1.5 })); h.rotation.x = Math.PI / 2; h.position.y = 0.42; head.add(h); }
   root.userData.parts = { legs, arms, head, body };
   return root;
 }

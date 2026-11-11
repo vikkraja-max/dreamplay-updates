@@ -10,7 +10,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { OPTIONS, DEFAULT_AVATAR, randomAvatar, buildAvatar, animateAvatar } from './adv_avatar.js';
 import { SPECIES, STARTERS, buildMon, foldShard, faceTex, bx, mat, ABILITIES, GEN_IDS } from './adv_mons.js';
-import { W, HALF, WATER, SPOTS, terrainHeight, buildWorld, groundAt, buildPerson } from './adv_world.js';
+import { W, HALF, WATER, SPOTS, terrainHeight, buildWorld, groundAt, buildPerson, ZONES, zoneOf, zoneLevel } from './adv_world.js';
 
 const $ = (id) => document.getElementById(id);
 const qs = new URLSearchParams(location.search);
@@ -126,7 +126,7 @@ addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
   if (paused) { pauseKey(e.code); e.preventDefault(); return; }
   if (!keys[e.code]) {
-    const map = { KeyE: 'talk', Enter: 'talk', KeyJ: 'attack', Digit1: 'skill1', Digit2: 'skill2', Digit3: 'ult', KeyF: 'cube', KeyQ: 'dodge', Tab: 'team', KeyC: 'avatar', Escape: 'pause', KeyP: 'pause', KeyH: 'help', KeyR: 'potion', KeyX: 'dex', KeyB: 'ride' };
+    const map = { KeyE: 'talk', Enter: 'talk', KeyJ: 'attack', Digit1: 'skill1', Digit2: 'skill2', Digit3: 'ult', KeyF: 'cube', KeyQ: 'dodge', Tab: 'team', KeyC: 'avatar', Escape: 'pause', KeyP: 'pause', KeyH: 'help', KeyR: 'potion', KeyX: 'dex', KeyB: 'ride', KeyG: 'dragon' };
     if (map[e.code]) press.add(map[e.code]);
     if (e.code === 'Space') press.add('jumpPress');
   }
@@ -298,7 +298,7 @@ function updatePlayer(dt) {
   P.x = Math.max(-HALF + 4, Math.min(HALF - 4, P.x)); P.z = Math.max(-HALF + 4, Math.min(HALF - 4, P.z));
   if (P.iframes > 0) P.iframes -= dt;
   const g2 = height(P.x, P.z), jumpHeld = (keys.Space || pad.jump) && !dlg.open;
-  if (flying) { const up = jumpHeld ? 1 : (keys.KeyQ || (pad.gp && pad.gp.buttons[1] && pad.gp.buttons[1].pressed)) ? -1 : 0; P.flyH = Math.max(1.2, Math.min(30, (P.flyH || 3) + up * 7 * dt)); P.y += (Math.max(g2, WATER) + P.flyH - P.y) * Math.min(1, dt * 5); P.vy = 0; P.onGround = false; }
+  if (flying) { const up = jumpHeld ? 1 : (keys.KeyQ || (pad.gp && pad.gp.buttons[1] && pad.gp.buttons[1].pressed)) ? -1 : 0; P.flyH = Math.max(1.2, Math.min(RIDE.dragon ? 70 : 30, (P.flyH || 3) + up * 7 * dt)); P.y += (Math.max(g2, WATER) + P.flyH - P.y) * Math.min(1, dt * 5); P.vy = 0; P.onGround = false; }
   else if (swimming && RIDE.on && RIDE.kind === 'swim') { P.y += (WATER - 0.3 - P.y) * Math.min(1, dt * 6); P.vy = 0; P.onGround = false; }
   else if (swimming) { P.y += (WATER - 0.55 - P.y) * Math.min(1, dt * 6); P.vy = 0; P.onGround = false; if (jumpHeld) P.y = Math.min(P.y + dt * 2, WATER - 0.2); }
   else {
@@ -321,9 +321,9 @@ function hurtPlayer(n) {
 }
 function updateCamera(dt) {
   if (MORPH.on || updateCine(dt)) return;
-  const tx = P.x, ty = P.y + 1.4, tz = P.z;
-  const cx = tx + Math.sin(cam.yaw) * Math.cos(cam.pitch) * cam.dist, cz = tz + Math.cos(cam.yaw) * Math.cos(cam.pitch) * cam.dist;
-  let cy = ty + Math.sin(cam.pitch) * cam.dist; cy = Math.max(cy, terrainHeight(cx, cz) + 0.8);
+  const tx = P.x, ty = P.y + 1.4, tz = P.z, cdist = cam.dist * (RIDE.dragon ? 1.8 : 1);
+  const cx = tx + Math.sin(cam.yaw) * Math.cos(cam.pitch) * cdist, cz = tz + Math.cos(cam.yaw) * Math.cos(cam.pitch) * cdist;
+  let cy = ty + Math.sin(cam.pitch) * cdist; cy = Math.max(cy, terrainHeight(cx, cz) + 0.8);
   if (cam.snap) { camera.position.set(cx, cy, cz); cam.snap = false; } else camera.position.lerp(new THREE.Vector3(cx, cy, cz), Math.min(1, dt * 10));
   camera.lookAt(tx, ty, tz); applyShake(dt);
   sun.position.set(P.x - 20, 40, P.z + 15); sun.target.position.set(P.x, 0, P.z);
@@ -433,7 +433,7 @@ function updateCompanion(dt, t) {
   if (comp.guardT > 0) comp.guardT -= dt;
   if (comp.attackT > 0) comp.attackT -= dt;
   if (updateFetch(dt, t)) return;
-  if (RIDE.on) {
+  if (RIDE.on && !RIDE.dragon) {
     comp.x = P.x; comp.z = P.z; comp.y = P.y; comp.yaw = P.yaw; comp.model.position.set(P.x, P.y + (RIDE.kind === 'fly' ? -0.6 : 0), P.z); comp.model.rotation.y = P.yaw;
     const mv = P.mode !== 'idle' || keys.KeyW || keys.KeyA || keys.KeyS || keys.KeyD || (pad.on && (pad.lx || pad.ly));
     comp.model.userData.anim(t, { moving: mv, fly: RIDE.kind === 'fly' });
@@ -518,6 +518,7 @@ function makeEnemy(sp, x, z, opts = {}) {
     state: 'idle', t: rand(0, 3), wind: 0, cool: 0, slowT: 0, staggerT: 0, hitT: 0, roarT: 0, ready: 0, alive: true, boss: !!opts.boss, catchable: opts.catchable !== false, shard: null, yaw: rand(0, 6), wander: [x, z], xp: opts.xp || 45 };
   e.abil = (d.abilities || []).slice();
   if (opts.corrupted) e.shard = foldShard(model, opts.boss ? 2.2 : 0.9);
+  applyLevel(e);
   enemies.push(e);
   return e;
 }
@@ -583,7 +584,7 @@ function killTarget(e) {
     if (e.shard) { spark(e.x, e.y + 1, e.z, '#3ad0ff', 22); e.model.remove(e.shard); e.shard = null; }
     floatText(e.x, e.y + 2.2, e.z, 'defeated!', '#9fe8ff'); slowmo(0.35, 0.5); shake(0.25, 0.3);
     toast(`🧊 You defeated <b>${e.name}</b>! You throw the FoldCube and catch it automatically!`, 4000);
-    save.coins += 8; renderStats(); giveXP(e.xp); if (isNight()) stat('nightWins');
+    save.coins += 8 + (e.lvl || 0); renderStats(); giveXP(e.xp); if (isNight()) stat('nightWins');
     if (comp) comp.celebrateT = 1.5; if (comp && comp.target === e) comp.auto = false;
     tip('autocatch', `🧊 When you <b>defeat</b> a wild Monstermon, your <b>FoldCube flies by itself</b> and catches it. You can also catch sad ones without fighting (walk slowly and watch them).`, '🧊 Automatic catch');
     launchCube(e); return;
@@ -594,7 +595,7 @@ function killTarget(e) {
   floatText(e.x, e.y + 2, e.z, 'tired out!', '#9fe8ff');
   setTimeout(() => removeEnemy(e), 1600);
   if (comp) comp.celebrateT = 1.5;
-  save.coins += 8; renderStats(); giveXP(e.xp); if (isNight()) stat('nightWins');
+  save.coins += 8 + (e.lvl || 0); renderStats(); giveXP(e.xp); if (isNight()) stat('nightWins');
   tip('defeat', `This Monstermon can't be caught, so it ran away.`);
   setTimeout(respawnWild, 30000);
 }
@@ -1255,6 +1256,7 @@ function openTeam() {
     + `<div style="grid-column:1/-1;color:var(--muted)">📖 Caught so far: <b>${Object.keys(save.dex.caught).length}/${DEX_ORDER.length}</b> different Monstermon. To swap team and garden, visit the 🌱 garden east of the lab.</div>`;
   document.querySelectorAll('#tmList .tmc[data-i]').forEach((c) => c.onclick = () => { const i = +c.dataset.i; if (save.team[i].hp <= 0) return toast('This Monstermon is tired. Rest at the camp or visit Professor Green.'); save.active = i; spawnCompanion(save.team[i]); closeTeam(); toast(`🔁 ${SPECIES[save.team[i].sp].name} came out of the FoldCube!`); });
   document.querySelectorAll('#tmList .tmc[data-g]').forEach((c) => c.onclick = () => toast('🌱 This one lives in Professor Green\u2019s garden. Go to the garden (east of the lab) and press E to bring it into your team.'));
+  document.querySelectorAll('#tmList .tmc[data-i]').forEach((c) => { c.insertAdjacentHTML('beforeend', `<button class="btn" data-elev="${c.dataset.i}" style="margin-top:6px">⬆️ Elevation Card (${save.items.elevate || 0})</button>`); c.querySelector('[data-elev]').onclick = (ev) => { ev.stopPropagation(); useElevate(+c.dataset.i); }; });
   // draw the 3D portraits a few at a time so the menu opens instantly
   const imgs = [...document.querySelectorAll('#tmList img.tport')]; let k = 0; const tok = openTeam.tok = (openTeam.tok || 0) + 1;
   const step = () => { if (tok !== openTeam.tok || $('teamMenu').classList.contains('hidden')) return; for (let n = 0; n < 4 && k < imgs.length; n++, k++) imgs[k].src = dexShot(imgs[k].dataset.sp); if (k < imgs.length) requestAnimationFrame(step); };
@@ -1314,7 +1316,7 @@ function pauseKey(code) {
 // ====================================================================== HUD: stats, companion, labels, minimap, quest list
 function renderStats() {
   const f = P.hp / P.maxHp, night = isNight();
-  $('stats').innerHTML = `<div class="pill">🧭 ${save.name}</div><div class="pill"><div class="bar"><div style="width:${f * 100}%;background:${f > .5 ? '#3ddc84' : f > .25 ? '#ffd34d' : '#ff5a6a'}"></div></div>❤️ ${Math.ceil(P.hp)}</div><div class="pill">🪙 ${save.coins} · 🧊 ${save.team.length}/7 · 🧪 ${save.items.potion}${save.items.strongCube ? ' · 💠 ' + save.items.strongCube : ''}</div><div class="pill">${night ? '🌙 Night' : '☀️ Day'} · ${WEATHERS[WX.type].icon} ${WEATHERS[WX.type].name}${lampOn ? ' · 🔦' : ''}</div>${POWER.t > 0 ? `<div class="pill" style="color:var(--gold)">💪 Baba Power ${Math.ceil(POWER.t)}s</div>` : ''}`;
+  $('stats').innerHTML = `<div class="pill">🧭 ${save.name}</div><div class="pill"><div class="bar"><div style="width:${f * 100}%;background:${f > .5 ? '#3ddc84' : f > .25 ? '#ffd34d' : '#ff5a6a'}"></div></div>❤️ ${Math.ceil(P.hp)}</div><div class="pill">🪙 ${save.coins} · 🧊 ${save.team.length}/7 · 🧪 ${save.items.potion} · ⬆️ ${save.items.elevate || 0}${save.items.strongCube ? ' · 💠 ' + save.items.strongCube : ''}</div><div class="pill">${night ? '🌙 Night' : '☀️ Day'} · ${WEATHERS[WX.type].icon} ${WEATHERS[WX.type].name}${lampOn ? ' · 🔦' : ''}</div>${POWER.t > 0 ? `<div class="pill" style="color:var(--gold)">💪 Baba Power ${Math.ceil(POWER.t)}s</div>` : ''}`;
 }
 function renderComp() {
   const el = $('comp');
@@ -1338,27 +1340,33 @@ function updateLabels() {
     if (p.z > 1 || Math.abs(p.x) > 1.1 || Math.abs(p.y) > 1.1 || dist2(e.x, e.z, P.x, P.z) > 34) continue;
     const f = Math.max(0, e.hp / e.max);
     if (e.kind === 'mon' && e.sp) markSeen(e.sp);
-    html += `<div class="lbl ${e === tgt ? 'target' : ''}" style="left:${(p.x + 1) / 2 * innerWidth}px;top:${(1 - p.y) / 2 * innerHeight}px">${e === tgt ? '🎯 ' : ''}${e.sp ? eIcon(e.sp) + ' ' : ''}${e.name}${e.mood === 'angry' ? ' 😠' : e.mood === 'sad' ? ' 😢' : ''}${e.shard ? ' 🧩' : ''}${e.abil && e.abil.length ? ' ' + e.abil.map((a) => ABILITIES[a][0]).join('') : ''}${SPECIES[e.sp] && SPECIES[e.sp].tier ? ' <span style="color:#ffd34d">' + '★'.repeat(SPECIES[e.sp].tier) + '</span>' : ''}${e.shielded ? ' 🛡️' : ''}${e.enraged ? ' 😡' : ''}${e.elemOverride ? ' 🎭' + ELEM[e.elemOverride].icon : ''}${e.boss && e.phase2 ? ' 🔥' : ''}<div class="hb"><div style="width:${f * 100}%;background:${e.boss ? '#ffd34d' : f > .5 ? '#3ddc84' : '#ff5a6a'}"></div></div>${e.catchable && e.kind === 'mon' ? `<div class="rd"><div style="width:${e.ready * 100}%"></div></div>${e.ready >= 0.99 ? '<span class="ok">✦ READY for the FoldCube</span>' : e.watching ? '<span class="ok">👀 watching…</span>' : ''}` : ''}</div>`;
+    html += `<div class="lbl ${e === tgt ? 'target' : ''}" style="left:${(p.x + 1) / 2 * innerWidth}px;top:${(1 - p.y) / 2 * innerHeight}px">${e === tgt ? '🎯 ' : ''}${e.sp ? eIcon(e.sp) + ' ' : ''}${e.name}${e.lvl ? ` <span style="color:${lvColor(e.lvl)}">Lv ${e.lvl}</span>` : ''}${e.mood === 'angry' ? ' 😠' : e.mood === 'sad' ? ' 😢' : ''}${e.shard ? ' 🧩' : ''}${e.abil && e.abil.length ? ' ' + e.abil.map((a) => ABILITIES[a][0]).join('') : ''}${SPECIES[e.sp] && SPECIES[e.sp].tier ? ' <span style="color:#ffd34d">' + '★'.repeat(SPECIES[e.sp].tier) + '</span>' : ''}${e.shielded ? ' 🛡️' : ''}${e.enraged ? ' 😡' : ''}${e.elemOverride ? ' 🎭' + ELEM[e.elemOverride].icon : ''}${e.boss && e.phase2 ? ' 🔥' : ''}<div class="hb"><div style="width:${f * 100}%;background:${e.boss ? '#ffd34d' : f > .5 ? '#3ddc84' : '#ff5a6a'}"></div></div>${e.catchable && e.kind === 'mon' ? `<div class="rd"><div style="width:${e.ready * 100}%"></div></div>${e.ready >= 0.99 ? '<span class="ok">✦ READY for the FoldCube</span>' : e.watching ? '<span class="ok">👀 watching…</span>' : ''}` : ''}</div>`;
   }
   L.querySelectorAll('.lbl.e').forEach((x) => x.remove());
   const wrap = document.createElement('div'); wrap.innerHTML = html;
   [...wrap.children].forEach((c) => { c.classList.add('e'); L.appendChild(c); });
 }
 const mctx = $('minimap').getContext('2d'); let mmBase = null;
-const toMM = (wx, wz) => [(wx + HALF) / W * 200, (wz + HALF) / W * 200];
+const MMV = 170, MMS = 200 / MMV;   // the round map shows 170 m around you
+const toMM = (wx, wz) => [100 + (wx - P.x) * MMS, 100 + (wz - P.z) * MMS];
+const clampMM = ([x, y], r = 86) => { const dx = x - 100, dy = y - 100, l = Math.hypot(dx, dy); return l > r ? [100 + dx / l * r, 100 + dy / l * r] : [x, y]; };
 function buildMinimapBase() {
-  const c = document.createElement('canvas'); c.width = c.height = 200; const x = c.getContext('2d'), N = 100;
-  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
-    const wx = -HALF + (i + 0.5) * W / N, wz = -HALF + (j + 0.5) * W / N, h = terrainHeight(wx, wz);
-    x.fillStyle = h < WATER - 0.2 ? '#2a6ab0' : h > 12 ? '#8a8f98' : h > 5 ? '#5a7a4a' : (wz > 38 && Math.abs(wx) < 40) ? '#a8c070' : `hsl(${105 - h * 3},45%,${30 + h * 2}%)`;
-    x.fillRect(i * 2, j * 2, 2, 2);
+  const N = 320, c = document.createElement('canvas'); c.width = c.height = N; const x = c.getContext('2d'), img = x.createImageData(N, N), col = new THREE.Color();
+  const ZC = { wastes: '#b8682f', swamp: '#3a5a2e', frost: '#dbe7f2', peaks: '#6a6680' };
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const wx = -HALF + (i + 0.5) * W / N, wz = -HALF + (j + 0.5) * W / N, h = terrainHeight(wx, wz), zn = zoneOf(wx, wz);
+    if (h < WATER - 0.2) col.set(zn === 'swamp' ? '#24402e' : '#2a6ab0'); else if (zn !== 'core') { col.set(ZC[zn]); col.multiplyScalar(0.8 + Math.min(0.5, h / 60)); if (zn === 'peaks' && h > 28) col.set('#f4f6fa'); }
+    else if (h > 12) col.set('#8a8f98'); else if (h > 5) col.set('#5a7a4a'); else if (wz > 38 && Math.abs(wx) < 40) col.set('#a8c070'); else col.setHSL((105 - h * 3) / 360, 0.45, (30 + h * 2) / 100);
+    const k = (j * N + i) * 4; img.data[k] = col.r * 255; img.data[k + 1] = col.g * 255; img.data[k + 2] = col.b * 255; img.data[k + 3] = 255;
   }
-  return c;
+  x.putImageData(img, 0, 0); return c;
 }
 function mmDot(wx, wz, col, r = 3) { const [x, y] = toMM(wx, wz); mctx.fillStyle = col; mctx.beginPath(); mctx.arc(x, y, r, 0, 7); mctx.fill(); mctx.strokeStyle = '#000'; mctx.lineWidth = 1; mctx.stroke(); }
 function drawMinimap() {
   if (!mmBase) mmBase = buildMinimapBase();
-  mctx.drawImage(mmBase, 0, 0);
+  mctx.fillStyle = '#0a1222'; mctx.fillRect(0, 0, 200, 200);
+  { const k = 320 / W; mctx.drawImage(mmBase, (P.x - MMV / 2 + HALF) * k, (P.z - MMV / 2 + HALF) * k, MMV * k, MMV * k, 0, 0, 200, 200); }
+  for (const c of chests) if (chestReady(c)) { const [cx2, cy2] = toMM(c.x, c.z); if (Math.hypot(cx2 - 100, cy2 - 100) < 92) { mctx.fillStyle = '#ffd34d'; mctx.fillRect(cx2 - 3, cy2 - 3, 6, 6); mctx.strokeStyle = '#000'; mctx.strokeRect(cx2 - 3, cy2 - 3, 6, 6); } }
   if (isNight()) { mctx.fillStyle = 'rgba(5,10,40,.45)'; mctx.fillRect(0, 0, 200, 200); }
   const [bx1, bz1] = toMM(0, 0); mctx.fillStyle = WORLD.bridgeState === 1 ? '#c8a060' : '#5a2a10'; mctx.fillRect(bx1 - 3, bz1 - 9, 6, 18);
   const [gx1, gz1] = toMM(...GATE); mctx.fillStyle = '#3ad0ff'; mctx.fillRect(gx1 - 4, gz1 - 3, 8, 6);
@@ -1367,8 +1375,8 @@ function drawMinimap() {
   mmDot(...SHOP_AT, '#e53950', 3.5); mmDot(...GARDEN_AT, '#9ad66a', 4); mmDot(...TROPHY_AT, '#ffcf3a', 3.5); mmDot(...CHAMBER, '#b48cff', 4.5); mmDot(...RACE_AT, '#ffffff', 3);
   for (const e of enemies) { if (!e.alive || e.kind === 'hidden' || e.kind === 'dummy' || e.kind === 'cage') continue; mmDot(e.x, e.z, e.boss ? '#ffd34d' : e.kind === 'pylon' ? '#6fe3ff' : e.mood === 'sad' ? '#5a8aff' : '#ff4a4a', e.boss ? 5 : 2.5); }
   if (D.state !== 'away') mmDot(D.x, D.z, '#3ddc84', 4.5);
-  if (beacon.visible) { const [sx, sy] = toMM(beacon.position.x, beacon.position.z); mctx.fillStyle = '#ffd34d'; mctx.font = 'bold 16px Segoe UI Emoji, sans-serif'; mctx.textAlign = 'center'; mctx.textBaseline = 'middle'; mctx.fillText('⭐', sx, sy); }
-  { const [gx, gy] = toMM(...SPOTS.green), pulse = 7 + (performance.now() / 400 % 1) * 9;
+  if (beacon.visible) { const [sx, sy] = clampMM(toMM(beacon.position.x, beacon.position.z)); mctx.fillStyle = '#ffd34d'; mctx.font = 'bold 16px Segoe UI Emoji, sans-serif'; mctx.textAlign = 'center'; mctx.textBaseline = 'middle'; mctx.fillText('⭐', sx, sy); }
+  { const [gx, gy] = clampMM(toMM(...SPOTS.green)), pulse = 7 + (performance.now() / 400 % 1) * 9;
     mctx.strokeStyle = 'rgba(61,220,132,' + (1 - (pulse - 7) / 9) + ')'; mctx.lineWidth = 2.5; mctx.beginPath(); mctx.arc(gx, gy, pulse, 0, 7); mctx.stroke();
     mctx.fillStyle = '#3ddc84'; mctx.beginPath(); mctx.arc(gx, gy, 7, 0, 7); mctx.fill(); mctx.strokeStyle = '#fff'; mctx.lineWidth = 2; mctx.stroke();
     mctx.fillStyle = '#05220f'; mctx.font = 'bold 10px Segoe UI'; mctx.textAlign = 'center'; mctx.textBaseline = 'middle'; mctx.fillText('G', gx, gy + 0.5); }
@@ -1407,6 +1415,7 @@ function renderQuests() {
 function interact() {
   if (dlg.open) { showLine(); return; }
   if (FISH.on || babaBusy() || CINE.t > 0 || MORPH.on) return;
+  { const ch = nearChest(); if (ch) { openChest(ch); return; } }
   if (dist2(P.x, P.z, ...CHAMBER) < 4.5 || dist2(P.x, P.z, ...labLocal(0, 4.8)) < 3) { if (!save.team.length) return toast('🧬 Catch some Monstermon first, then come back to morph them!'); openMorph(); return; }
   if (D.state === 'waiting' && dist2(D.x, D.z, P.x, P.z) < 3.2) { uncleHelp(true); return; }
   if (save.step === 'arrive' && dist2(P.x, P.z, ...SPOTS.green) < 4.5) { story('meetGreen'); return; }
@@ -1449,7 +1458,7 @@ function updateGuide() {
   if (dc(...TROPHY_AT) < 4.5) return guide(`🏆 Press <b>${BTN.talk()}</b> to see your medals in the Trophy room.`, 'friend');
   if (dc(SPOTS.camp[0], SPOTS.camp[1]) < 6 && save.team.length) return guide(`⛺ Press <b>${BTN.talk()}</b> to rest, heal and take care of your Monstermon (feed, pet, play).`, 'friend');
   if (nearShore()) return guide(`🎣 Press <b>${BTN.talk()}</b> to go fishing in the lake!`, 'friend');
-  if (RIDE.on) return guide(RIDE.kind === 'fly' ? `🐉 Flying! Hold <b>${BTN.jump()}</b> to go up, <b>${BTN.dodge()}</b> to go down, <b>${BTN.ride()}</b> to land.` : `🐉 Riding ${SPECIES[comp.m.sp].name}! Press <b>${BTN.ride()}</b> to hop off.`, 'friend');
+  if (RIDE.on) return guide(RIDE.kind === 'fly' ? `🐉 Flying! Hold <b>${BTN.jump()}</b> to go up, <b>${BTN.dodge()}</b> to go down, <b>${RIDE.dragon ? (TOUCH.mode ? '🐉' : 'G') : BTN.ride()}</b> to land.` : `🐉 Riding ${SPECIES[comp.m.sp].name}! Press <b>${BTN.ride()}</b> to hop off.`, 'friend');
   if (dc(...SHOP_AT) < 4) return guide(`🛒 Press <b>${BTN.talk()}</b> to open the <b>shop</b>. You have ${save.coins} 🪙.`, 'friend');
   if (dc(...GARDEN_AT) < 7.5 && save.team.length) return guide(`🌱 Professor Green's garden: press <b>${BTN.talk()}</b> to swap Monstermon between your team and the garden.`, 'friend');
   if (VILLAGERS.some((v) => dc(v.at[0], v.at[1]) < 3.2)) return guide(`💬 Press <b>${BTN.talk()}</b> to talk to the villager.`);
@@ -1672,7 +1681,7 @@ const SHOP_ITEMS = [
   { id: 'hat:wizard', icon: '🧙', name: 'Wizard Hat', price: 150, desc: () => 'A tall purple hat with a star.' },
   { id: 'hat:crown', icon: '👑', name: 'Golden Crown', price: 250, desc: () => 'For the true champion of Virelia.' },
 ];
-const LOCKED = { hat: ['crown', 'pirate', 'wizard', 'hood'], glasses: ['sun'], scarf: ['scarf'] };
+const LOCKED = { hat: ['crown', 'pirate', 'wizard', 'hood'], glasses: ['sun'], scarf: ['scarf'], back: ['cape', 'wings', 'jetpack', 'halo'] };
 const isUnlocked = (key, id) => !LOCKED[key] || !LOCKED[key].includes(id) || save.unlocked.includes(key + ':' + id);
 // shop stall + shopkeeper
 const shopStall = new THREE.Group(); scene.add(shopStall);
@@ -1832,7 +1841,7 @@ function helpHTML(tab) {
       <h3>🌱 Professor Green's garden</h3><p>East of the lab. When your team is full, new catches live here. Walk into the garden and press <b>${BTN.talk()}</b> to <b>bring them back</b> or <b>swap</b> them with team members.</p>
       <h3>🛒 Shop</h3><p>In the village. Spend 🪙 coins on 🧪 Healing Potions, 💠 Strong FoldCubes, 🍬 XP Treats, and cool clothes (sunglasses, scarf, pirate hat, wizard hat, golden crown).</p>
       <h3>📖 Dex</h3><p>Shows every Monstermon you have seen and caught. Rewards at 5, 10 and all 19 caught.</p>`;
-    case 'world': return `<h3>People and places</h3><table class="ht">${K('👨‍🔬 Professor Green', 'Gives you your starter and heals your team')}${K('🟣 Nira', 'At the camp. Side quests with rewards')}${K('🛒 Shopkeeper', 'Sells items and clothes')}${K('❤️ Baba', 'When you are almost out of health he runs to you, gives you a big hug, and does a SLAM: the wave drops every evil creature nearby to 1% health. Then he heals everyone. He also visits with rewards.')}${K('😊 Valeza', 'Friendly lake creature: swim with her to be 2x faster')}${K('😠 Kraku', 'Mean lake creature: chases swimmers')}${K('🍄 Singing mushrooms', 'Open and sing when you are close (Nira loves them)')}${K('⛺ Camp', 'Rest, heal, save, and feed / pet / play with your Monstermon')}${K('🏁 Race flag', 'Race Skipclip through 8 rings (north of the village start)')}${K('🏆 Trophy room', 'Your medals (village, east of the start)')}${K('🧬 Morph Lab', 'West of the village start (purple dot). Fuse two caught Monstermon into a brand-new, stronger Morph that you can name. Costs 50 coins.')}${K('🎣 Lake shore', 'Press E to fish. Valeza makes it easier')}${K('🔷 Lift', 'In front of the mountain gate: goes up to the Folded City (Chapter 2)')}${K('🎩 Count Crease', 'The villain who folds the forest')}${K('🌌 Aurorell', 'Legendary: mountain top, only on snowy nights')}${K('⛰️ The Cut Mountain', 'Far north, with a mysterious folded gate. Stronger monsters!')}</table>`;
+    case 'world': return `<h3>People and places</h3><table class="ht">${K('👨‍🔬 Professor Green', 'Gives you your starter and heals your team')}${K('🟣 Nira', 'At the camp. Side quests with rewards')}${K('🛒 Shopkeeper', 'Sells items and clothes')}${K('❤️ Baba', 'When you are almost out of health he runs to you, gives you a big hug, and does a SLAM: the wave drops every evil creature nearby to 1% health. Then he heals everyone. He also visits with rewards.')}${K('😊 Valeza', 'Friendly lake creature: swim with her to be 2x faster')}${K('😠 Kraku', 'Mean lake creature: chases swimmers')}${K('🍄 Singing mushrooms', 'Open and sing when you are close (Nira loves them)')}${K('⛺ Camp', 'Rest, heal, save, and feed / pet / play with your Monstermon')}${K('🏁 Race flag', 'Race Skipclip through 8 rings (north of the village start)')}${K('🏆 Trophy room', 'Your medals (village, east of the start)')}${K('🧬 Morph Lab', 'West of the village start (purple dot). Fuse two caught Monstermon into a brand-new, stronger Morph that you can name. Costs 50 coins.')}${K('🎣 Lake shore', 'Press E to fish. Valeza makes it easier')}${K('🔷 Lift', 'In front of the mountain gate: goes up to the Folded City (Chapter 2)')}${K('🐉 Skyfang', 'Your dragon! Press G (or the 🐉 button) to fly anywhere. Space / ⬆️ up, Q / 🔄 down')}${K('🎁 Chests', 'Gold squares on the map. Solve math puzzles to open them: clothes, accessories, a gift Monstermon and ⬆️ Elevation Cards (+1 level, use them in Team)')}${K('🗺️ The five lands', 'Songwood Forest (Lv 1–8) in the middle, Ember Wastes east (10–25), Frostveil Tundra west (14–28), Gloomfen Swamp south (18–32), Shattered Peaks north (30–50)')}${K('🎩 Count Crease', 'The villain who folds the forest')}${K('🌌 Aurorell', 'Legendary: mountain top, only on snowy nights')}${K('⛰️ The Cut Mountain', 'Far north, with a mysterious folded gate. Stronger monsters!')}</table>`;
     case 'pad': return `<h3>Controller test</h3><p id="padStatus"></p><div id="padBtns" class="padgrid"></div><div class="sticks"><div class="stick"><div id="stickL"></div></div><div class="stick"><div id="stickR"></div></div></div><div class="row"><button class="btn blue" id="rumbleBtn">📳 Test vibration</button></div><p style="color:var(--muted)">Press every button: it lights up here. Move both sticks: the dots should follow. If something does not light up, tell me which one.</p>`;
   }
   return '';
@@ -2302,7 +2311,9 @@ function openParent() {
 function updateExtras(dt, t) {
   updateGreenBeacon(t); updateTalkBubble(); updateMorph(dt, t); updateLabIdle(t); updateSpawner(dt); updateBaba(dt, t); updateRace(dt, t); updateCrease(dt); updateLegend(); updateParent(dt); updateTrophies();
   if (state === 'play' && save.team.length) { for (const m of save.team) { happy(m); m.happy = Math.max(0, m.happy - dt / 30); } }
-  if (RIDE.on && (!comp || !RIDEABLE[comp.m.sp])) dismount();
+  if (RIDE.on && !RIDE.dragon && (!comp || !RIDEABLE[comp.m.sp])) dismount();
+  if (press.has('dragon')) toggleDragon();
+  updateZones(dt); updateDragon(t); updateChests(dt, t);
   raceNpc.userData.anim && !RACE.on && raceNpc.userData.anim(t, {});
   // "busy" states block normal actions
   if (FISH.on) { if (press.has('jumpPress') || press.has('talk')) { press.delete('talk'); press.delete('jumpPress'); fishPress(); } if (press.has('dodge')) { press.delete('dodge'); endFishing('🎣 You put the fishing rod away.'); } }
@@ -2369,6 +2380,7 @@ function startAttack2(e, style, tg, hit) {
 }
 // region + spawner: creatures appear around you depending on where you are, the weather and the time of day
 function regionAt(x, z) {
+  const zz = zoneOf(x, z); if (zz !== 'core') return zz;
   const h = terrainHeight(x, z);
   if (z < -63 && h > 14) return 'city';
   if (z < -24) return 'mountain';
@@ -2403,7 +2415,7 @@ function updateSpawner(dt) {
     if (region === 'village' || h < WATER + 0.2 || Math.abs(z) < 10) continue;
     if (region === 'city' && !reached('city')) continue;
     if (region === 'mountain' && !reached('mountain') && z < -40) continue;
-    const sp = pickSpecies(region); if (!sp) continue;
+    const sp = ZONE_ELEM[region] ? pickZoneSpecies(region) : pickSpecies(region); if (!sp) continue;
     const d = SPECIES[sp], tier = d.tier || 2;
     const e = makeEnemy(sp, x, z, { atkMul: 0.65 + tier * 0.1, xp: 25 + tier * 15, corrupted: Math.random() < 0.2 });
     e.wild = true; e.abil = d.abilities ? d.abilities.slice() : [];
@@ -2514,7 +2526,7 @@ function updateSky(dt, t) {
 // ---- water: waves, sun glints, shallow colors and foam on the shore
 const WATERU = { uTime: { value: 0 } };
 {
-  const w = WORLD.water, geo = new THREE.PlaneGeometry(W, W, 190, 190), pos = geo.attributes.position, dep = new Float32Array(pos.count);
+  const w = WORLD.water, geo = new THREE.PlaneGeometry(W, W, 320, 320), pos = geo.attributes.position, dep = new Float32Array(pos.count);
   for (let i = 0; i < pos.count; i++) dep[i] = WATER - terrainHeight(pos.getX(i), -pos.getY(i));
   geo.setAttribute('aDepth', new THREE.BufferAttribute(dep, 1));
   const m = new THREE.MeshStandardMaterial({ color: '#ffffff', transparent: true, opacity: 0.85, roughness: 0.12, metalness: 0.15 });
@@ -2731,7 +2743,7 @@ function updateGfx(rawDt, t) {
   WATERU.uTime.value = t;
   GRASSU.uTime.value = t; GRASSU.uCenter.value.set(Math.round(P.x), Math.round(P.z)); GRASSU.uPlayer.value.set(P.x, P.z);
   GRASSU.uWind.value.set(Math.sin(WX.windDir) * WX.amt.wind * 0.45, Math.cos(WX.windDir) * WX.amt.wind * 0.45);
-  updateSky(rawDt, t); updateWeatherGfx(rawDt); updateNightGfx(rawDt, t); updateVfx(rawDt, t); updateMoveFx(rawDt);
+  updateSky(rawDt, t); if (RIDE.dragon) { scene.fog.far *= 1 + Math.min(1.6, P.flyH / 25); scene.fog.near *= 1.4; } updateWeatherGfx(rawDt); updateNightGfx(rawDt, t); updateVfx(rawDt, t); updateMoveFx(rawDt);
 }
 
 function rarity(sp) { const d = SPECIES[sp] || {}; if (d.legendary) return 'leg'; if (d.starter || d.evoOf) return 'rs'; const t = d.tier || 2; return t >= 5 ? 'r5' : t === 4 ? 'r4' : t === 3 ? 'r3' : 'r1'; }
@@ -3181,6 +3193,7 @@ bub.addEventListener('touchstart', bubGo, { passive: false }); bub.addEventListe
 // what can be used right now, and where to float the bubble (same order as interact())
 function interactTarget() {
   const d = (x, z) => dist2(P.x, P.z, x, z), at = (x, z, y) => new THREE.Vector3(x, y ?? height(x, z), z);
+  { const ch = nearChest(); if (ch) return { p: at(ch.x, ch.z, ch.y + 2.0), ic: '🎁', tx: CHEST_LOOK[ch.tier][2] + ' chest' }; }
   if (D.state === 'waiting' && d(D.x, D.z) < 3.2) return { p: at(D.x, D.z, uncle.position.y + 3.0), ic: '❤️', tx: 'Baba' };
   if (save.step === 'arrive' && d(...SPOTS.green) < 4.5) return { p: at(green.position.x, green.position.z, green.position.y + 2.4), ic: '💬', tx: 'Professor Green' };
   if (nira.visible && d(...NIRA_AT) < 3.5) return { p: at(nira.position.x, nira.position.z, nira.position.y + 2.3), ic: '💬', tx: 'Nira' };
@@ -3329,6 +3342,193 @@ function updateGreenBeacon(t) {
   $('greenDist').textContent = Math.round(d) + ' m';
 }
 
+// ====================================================================== EXPLORATION: zones + levels (like WoW), Skyfang the dragon, chests with Grade 3 math, Elevation Cards
+// ---- zone banner when you enter a new land
+document.head.insertAdjacentHTML('beforeend', `<style>
+  #zoneBan { position: fixed; left: 50%; top: 23%; transform: translate(-50%, -50%); z-index: 9; text-align: center; pointer-events: none; opacity: 0; transition: opacity .8s; }
+  #zoneBan .zn { font-size: 46px; font-weight: 900; letter-spacing: 4px; color: #fff; text-shadow: 0 3px 16px #000, 0 0 30px var(--zc); }
+  #zoneBan .zs { font-size: 15px; font-weight: 800; letter-spacing: 5px; text-transform: uppercase; color: var(--zc); text-shadow: 0 2px 8px #000; }
+  #zoneBan .zl { display: inline-block; margin-top: 8px; padding: 4px 14px; border-radius: 999px; font-weight: 900; color: #fff; background: rgba(8,12,28,.6); box-shadow: inset 0 0 0 1.5px var(--zc); }
+  #chestUI .panel { width: min(640px, 94vw); text-align: center; }
+  #chestUI .q { font-size: 26px; font-weight: 900; margin: 14px 0 6px; color: #fff; } #chestUI .ctx { color: #cfe; font-size: 17px; line-height: 1.5; }
+  #chestUI .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; } #chestUI .opts .btn { font-size: 22px; padding: 16px; }
+  #chestUI .ok { background: linear-gradient(120deg, #22c56a, #1e90ff) !important; } #chestUI .no { background: linear-gradient(120deg, #e53950, #8a1430) !important; }
+  #chestUI .loot { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
+  #chestUI .li { padding: 14px 10px; border-radius: 16px; background: linear-gradient(180deg, rgba(40,30,80,.9), rgba(14,18,40,.9)); box-shadow: inset 0 0 0 1.5px #ffd34d, 0 0 18px rgba(255,211,77,.3); animation: zoomIn .4s ease both; }
+  #chestUI .li .big { font-size: 44px; } #chestUI .li b { display: block; margin-top: 4px; } #chestUI .li small { color: #9fb3d8; }
+  #chestUI .prog { display: flex; gap: 6px; justify-content: center; margin-top: 6px; } #chestUI .prog span { width: 30px; height: 8px; border-radius: 4px; background: rgba(255,255,255,.15); } #chestUI .prog span.on { background: #3ddc84; }
+</style>`);
+document.body.insertAdjacentHTML('beforeend', `<div id="zoneBan"><div class="zs" id="zbSub"></div><div class="zn" id="zbName"></div><div class="zl" id="zbLv"></div></div>
+<div id="chestUI" class="overlay hidden"><div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><h2 id="chTitle">🎁 Treasure chest</h2><button class="btn" id="chClose">✖ Close</button></div><div id="chBody"></div></div></div>`);
+NAV_OVERLAYS.push('chestUI'); EXTRA_BACK.chestUI = () => closeOverlay('chestUI'); $('chClose').onclick = EXTRA_BACK.chestUI;
+let curZone = null, zbT = 0;
+function updateZones(dt) {
+  if (state !== 'play') return;
+  const z = zoneOf(P.x, P.z);
+  if (z !== curZone) {
+    const first = curZone === null; curZone = z; if (first) return;
+    const Z = ZONES[z], ban = $('zoneBan'); ban.style.setProperty('--zc', Z.color);
+    $('zbName').textContent = Z.name.toUpperCase(); $('zbSub').textContent = Z.sub; $('zbLv').textContent = `Level ${Z.lv[0]}–${Z.lv[1]}`;
+    ban.style.opacity = 1; zbT = 4; SFX.chime(520);
+    save.zones = save.zones || {}; if (!save.zones[z]) { save.zones[z] = 1; save.coins += 20; toast(`🗺️ New land discovered: <b>${Z.name}</b>! +20 🪙`); }
+    if (z !== 'core') tip('zones', `🗺️ The world is big! The <b>farther</b> you go from Rootlight, the <b>stronger</b> the monsters get. Look at the <b>Lv</b> next to their names: <span style="color:#3ddc84">green</span> = easy, <span style="color:#ffd34d">yellow</span> = fair, <span style="color:#ff5a6a">red</span> = dangerous!`, '🗺️ Lands and levels');
+  }
+  if (zbT > 0) { zbT -= dt; if (zbT <= 0) $('zoneBan').style.opacity = 0; }
+}
+// ---- enemy levels by distance
+function applyLevel(e) {
+  if (e.kind !== 'mon' || e.boss || e.lvl) return;
+  const L = zoneLevel(e.x, e.z); e.lvl = L;
+  const k = Math.max(0, L - 6); e.max = e.hp = e.max * (1 + 0.11 * k); e.atk *= 1 + 0.07 * k; e.xp = Math.round((e.xp || 40) * (1 + 0.15 * k));
+}
+function lvColor(L) { const c = comp ? (comp.m.lv || 1) : 1, d = L - c; return d >= 5 ? '#ff5a6a' : d >= 2 ? '#ff9a3a' : d >= -2 ? '#ffd34d' : d >= -8 ? '#3ddc84' : '#9aa4b8'; }
+const ZONE_ELEM = { wastes: ['fire', 'stone'], swamp: ['plant', 'water'], frost: ['water', 'light', 'wind'], peaks: ['wind', 'metal', 'light', 'stone'] };
+const ZONE_TIER = { wastes: [1, 3], swamp: [2, 4], frost: [2, 4], peaks: [3, 5] };
+function pickZoneSpecies(z) {
+  const [t0, t1] = ZONE_TIER[z], pool = GEN_IDS.filter((id) => { const d = SPECIES[id]; return ZONE_ELEM[z].includes(d.elem) && d.tier >= t0 && d.tier <= t1 && condOk(d.cond); });
+  return pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
+}
+
+// ---- SKYFANG the dragon (call it any time once you have a companion)
+function makeDragon() {
+  const g = new THREE.Group(), root = new THREE.Group(); g.add(root);
+  const sc = '#3a2a6a', sc2 = '#6a3ab0', belly = '#ffcf6a', glow = '#ffb020';
+  bx(root, 1.6, 1.3, 3.2, sc, 0, 1.4, 0); bx(root, 1.2, 0.5, 2.6, belly, 0, 0.85, 0.1);
+  for (let k = 0; k < 6; k++) { const s = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.6, 4), mat('#ff5ad6', { e: '#ff5ad6', ei: 0.8 })); s.position.set(0, 2.2, -1.2 + k * 0.45); root.add(s); }
+  const neck = new THREE.Group(); neck.position.set(0, 1.8, 1.5); root.add(neck); bx(neck, 0.8, 1.6, 0.8, sc, 0, 0.6, 0.3).rotation.x = 0.5;
+  const head = new THREE.Group(); head.position.set(0, 1.4, 0.9); neck.add(head);
+  bx(head, 1.0, 0.8, 1.4, sc2, 0, 0, 0.3); bx(head, 0.8, 0.3, 0.9, sc, 0, -0.35, 0.65);
+  for (const s of [-1, 1]) { const h = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.9, 5), mat('#efe6cf')); h.position.set(s * 0.35, 0.65, -0.1); h.rotation.x = -0.6; head.add(h); bx(head, 0.22, 0.14, 0.05, mat(glow, { e: glow, ei: 3 }), s * 0.28, 0.12, 1.0); }
+  for (let k = 0; k < 4; k++) { const t = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.18, 4), mat('#ffffff')); t.position.set(-0.24 + k * 0.16, -0.55, 1.05); t.rotation.x = Math.PI; head.add(t); }
+  const wings = [];
+  for (const s of [-1, 1]) { const w = new THREE.Group(); w.position.set(s * 0.8, 1.9, 0.2); root.add(w); for (let k = 0; k < 4; k++) { const p = bx(w, 1.4, 0.08, 1.8 - k * 0.3, k % 2 ? sc2 : '#2a1a4a', s * (0.7 + k * 1.25), k * 0.12, -k * 0.25); p.rotation.z = s * 0.12; } bx(w, 5, 0.18, 0.18, sc, s * 2.5, 0.25, 0.8); wings.push(w); }
+  const tail = new THREE.Group(); tail.position.set(0, 1.3, -1.6); root.add(tail);
+  for (let k = 0; k < 6; k++) bx(tail, 0.7 - k * 0.1, 0.6 - k * 0.08, 0.8, k % 2 ? sc2 : sc, 0, -k * 0.05, -k * 0.7);
+  const tip2 = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.7, 4), mat('#ff5ad6', { e: '#ff5ad6', ei: 1 })); tip2.position.set(0, -0.3, -4.4); tip2.rotation.x = -Math.PI / 2; tail.add(tip2);
+  const legs = []; for (const [x, z] of [[-0.6, 0.9], [0.6, 0.9], [-0.6, -0.9], [0.6, -0.9]]) { const l = bx(root, 0.45, 1.0, 0.45, sc, x, 0.5, z); legs.push(l); }
+  bx(root, 1.0, 0.25, 0.9, '#8a5a2b', 0, 2.1, 0.3);   // saddle
+  g.userData.anim = (t, flying) => {
+    wings.forEach((w, i) => w.rotation.z = (flying ? Math.sin(t * 6) * 0.55 : 0.9) * (i ? -1 : 1));
+    tail.rotation.y = Math.sin(t * 2) * 0.25; head.rotation.x = Math.sin(t * 1.5) * 0.08;
+    legs.forEach((l) => l.visible = !flying || P.flyH < 2);
+    root.rotation.x = flying ? -0.08 : 0;
+  };
+  g.scale.setScalar(1.1); g.visible = false; scene.add(g); return g;
+}
+const skyfang = makeDragon();
+function toggleDragon() {
+  if (RIDE.on) return dismount(RIDE.dragon ? 'You landed and hopped off Skyfang.' : 'You hopped off.');
+  if (!save.team.length) return toast('🐉 Choose your first Monstermon at Professor Green’s lab first!');
+  RIDE.on = true; RIDE.dragon = true; RIDE.kind = 'fly'; RIDE.r = { kind: 'fly', seat: 2.35, speed: 22, label: 'fly' }; P.flyH = 2.5;
+  skyfang.visible = true; stat('rides'); roar(0.6, true); SFX.whoosh(); spark(P.x, P.y + 1, P.z, '#b48cff', 24);
+  toast(`🐉 <b>Skyfang</b> lands next to you! Fly with ${TOUCH.mode ? 'the stick, ⬆️ to go up and 🔄 to go down' : '<b>WASD</b>, <b>Space</b> up, <b>Q</b> down'}. Press 🐉 again to land.`, 5500);
+}
+const _dismount = dismount;
+dismount = function (msg) { if (RIDE.dragon) { RIDE.dragon = false; skyfang.visible = false; if (comp) comp.model.visible = true; } _dismount(msg); };
+function updateDragon(t) {
+  if (!RIDE.dragon) return;
+  skyfang.position.set(P.x, P.y - 0.15, P.z); skyfang.rotation.y = P.yaw; skyfang.userData.anim(t, P.flyH > 1.5);
+  if (comp) comp.model.visible = dist2(comp.x, comp.z, P.x, P.z) < 30;
+}
+// a dragon button for touch screens and the G key
+TBTNS.push(['dragon', '🐉', 'DRAGON', 58, 300, 200, '']);
+TI.dragon = ['#b48cff', 'M3 17c3-1 5-4 6-8 2 2 4 2 6 0 1 4 3 7 6 8M9 9l-2-5 4 3M15 9l2-5-4 3M12 13v4'];
+$('tBtns').insertAdjacentHTML('beforeend', `<div class="tbtn" data-a="dragon" style="--ac:#b48cff"><span class="cdm"></span><span class="ti"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${TI.dragon[1]}"/></svg></span><small>Dragon</small></div>`);
+{ const b = document.querySelector('.tbtn[data-a="dragon"]'); b.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); if (TEDIT.on) return; b.classList.add('down'); press.add('dragon'); }, { passive: false }); b.addEventListener('touchend', (e) => { e.preventDefault(); b.classList.remove('down'); }, { passive: false }); }
+applyLayout();
+
+// ---- CHESTS: solve Grade 3 math (IB PYP style) to open them
+const CHEST_TIER = { core: 0, wastes: 1, frost: 1, swamp: 2, peaks: 3 };
+const CHEST_LOOK = [['#8a5a2b', '#c9a060', 'Wooden'], ['#9aa4b8', '#e8eef6', 'Silver'], ['#d9a020', '#ffe08a', 'Golden'], ['#8a5aff', '#e0d0ff', 'Crystal']];
+const CHEST_RESPAWN = 20 * 60 * 1000;
+const chests = WORLD.chests.map((c) => {
+  const [c1, c2] = CHEST_LOOK[CHEST_TIER[c.zone]], g = new THREE.Group(); g.position.set(c.x, c.y, c.z); g.rotation.y = Math.random() * 6;
+  bx(g, 1.3, 0.75, 0.9, c1, 0, 0.38, 0); for (const x of [-0.5, 0.5]) bx(g, 0.1, 0.78, 0.94, c2, x, 0.39, 0);
+  const lid = new THREE.Group(); lid.position.set(0, 0.75, -0.45); g.add(lid); bx(lid, 1.32, 0.35, 0.92, c1, 0, 0.17, 0.45); bx(lid, 0.22, 0.24, 0.06, mat('#ffd34d', { e: '#ffb020', ei: 1 }), 0, 0.05, 0.93);
+  const glow = new THREE.PointLight(CHEST_TIER[c.zone] === 3 ? 0xb48cff : 0xffd34d, 3, 6); glow.position.y = 1.4; g.add(glow);
+  scene.add(g); return { ...c, g, lid, glow, tier: CHEST_TIER[c.zone], open: 0 };
+});
+const chestReady = (c) => !(save.chests && save.chests[c.id] && Date.now() - save.chests[c.id] < CHEST_RESPAWN);
+function updateChests(dt, t) {
+  for (const c of chests) {
+    const ready = chestReady(c), want = ready ? 0 : 1; c.open += (want - c.open) * Math.min(1, dt * 4);
+    c.lid.rotation.x = -c.open * 1.9; c.glow.intensity = ready ? 2.2 + Math.sin(t * 3 + c.x) * 1 : 0;
+  }
+}
+function nearChest() { return chests.find((c) => chestReady(c) && dist2(P.x, P.z, c.x, c.z) < 2.6); }
+// ---- Grade 3 math (IB PYP): number, operations, place value, fractions, time, money, measurement, word problems
+const ri = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+const NAMES = ['Nira', 'Professor Green', 'Baba', 'Skipclip', 'Valeza'];
+function mathQ() {
+  const kind = ri(0, 11); let q, a, ctx = '';
+  switch (kind) {
+    case 0: { const x = ri(120, 499), y = ri(110, 480); q = `${x} + ${y} = ?`; a = x + y; break; }
+    case 1: { const x = ri(300, 900), y = ri(100, x - 50); q = `${x} − ${y} = ?`; a = x - y; break; }
+    case 2: { const x = ri(2, 10), y = ri(2, 10); q = `${x} × ${y} = ?`; a = x * y; break; }
+    case 3: { const y = ri(2, 10), a2 = ri(2, 10); q = `${y * a2} ÷ ${y} = ?`; a = a2; break; }
+    case 4: { const n = ri(100, 999), place = ri(0, 2), names = ['ones', 'tens', 'hundreds']; ctx = `In the number <b>${n}</b>…`; q = `What digit is in the ${names[place]} place?`; a = Math.floor(n / Math.pow(10, place)) % 10; break; }
+    case 5: { const n = ri(1, 9) * 100 + ri(0, 9) * 10 + ri(1, 9); q = `Round ${n} to the nearest 10`; a = Math.round(n / 10) * 10; break; }
+    case 6: { const d = [2, 3, 4, 5, 6, 8][ri(0, 5)], m = ri(2, 6), tot = d * m; ctx = `${NAMES[ri(0, 4)]} has <b>${tot}</b> berries and gives away <b>1/${d}</b> of them.`; q = `How many berries is 1/${d} of ${tot}?`; a = m; break; }
+    case 7: { const h = ri(1, 11), m = [0, 15, 30, 45][ri(0, 3)], add = [15, 30, 45, 60][ri(0, 3)]; const tot = h * 60 + m + add; ctx = `The clock shows <b>${h}:${String(m).padStart(2, '0')}</b>. A quest takes <b>${add} minutes</b>.`; q = 'What time will it end? (minutes past the hour)'; a = tot % 60; break; }
+    case 8: { const p = ri(12, 45), c = ri(2, 4); ctx = `A healing potion costs <b>${p} coins</b>.`; q = `How much do ${c} potions cost?`; a = p * c; break; }
+    case 9: { const l = ri(3, 12), w = ri(2, 9); ctx = `Professor Green's garden is a rectangle <b>${l} m</b> long and <b>${w} m</b> wide.`; q = 'What is its perimeter in metres?'; a = 2 * (l + w); break; }
+    case 10: { const n = ri(3, 9), per = ri(3, 8); ctx = `There are <b>${n}</b> nests and each nest has <b>${per}</b> monster eggs.`; q = 'How many eggs are there in total?'; a = n * per; break; }
+    default: { const s0 = ri(5, 40), step = ri(3, 12); ctx = `Find the pattern: <b>${s0}, ${s0 + step}, ${s0 + 2 * step}, ${s0 + 3 * step}, …</b>`; q = 'What number comes next?'; a = s0 + 4 * step; }
+  }
+  const opts = new Set([a]); const spread = Math.max(3, Math.round(Math.abs(a) * 0.15));
+  while (opts.size < 4) { const o = a + ri(-spread, spread) || a + 1; if (o >= 0 && o !== a) opts.add(o); }
+  return { q, a, ctx, opts: [...opts].sort(() => Math.random() - 0.5) };
+}
+let CH = null;
+function openChest(c) {
+  CH = { c, need: c.tier + 1, done: 0, tries: 0 }; openOverlay('chestUI');
+  $('chTitle').textContent = `🎁 ${CHEST_LOOK[c.tier][2]} chest`;
+  tip('chestmath', `🧮 Chests are locked with <b>math puzzles</b>! Solve them to open the chest. Wooden chests need 1 answer, Crystal chests need 4. Wrong answers just give you a new puzzle.`, '🎁 Chests');
+  askMath();
+}
+function askMath() {
+  const m = mathQ(); CH.m = m;
+  $('chBody').innerHTML = `<div class="prog">${Array.from({ length: CH.need }, (_, i) => `<span class="${i < CH.done ? 'on' : ''}"></span>`).join('')}</div><div style="color:#9fb3d8;margin-top:6px">Solve ${CH.need} puzzle${CH.need > 1 ? 's' : ''} to open it (${CH.done}/${CH.need})</div>${m.ctx ? `<div class="ctx" style="margin-top:10px">${m.ctx}</div>` : ''}<div class="q">${m.q}</div><div class="opts">${m.opts.map((o) => `<button class="btn" data-ans="${o}">${o}</button>`).join('')}</div>`;
+  $('chBody').querySelectorAll('[data-ans]').forEach((b) => b.onclick = () => answerMath(+b.dataset.ans, b));
+  if (pad.on) setTimeout(() => navMove(0, 1), 50);
+}
+function answerMath(v, b) {
+  if (CH.locked) return; CH.locked = true;
+  if (v === CH.m.a) { b.classList.add('ok'); SFX.chime(880 + CH.done * 120); CH.done++; stat('mathRight'); setTimeout(() => { CH.locked = false; CH.done >= CH.need ? giveLoot() : askMath(); }, 600); }
+  else { b.classList.add('no'); $('chBody').querySelector(`[data-ans="${CH.m.a}"]`).classList.add('ok'); SFX.fail(); setTimeout(() => { CH.locked = false; askMath(); }, 1400); }
+}
+// loot: clothes, accessories, a gift Monstermon, Elevation Cards, coins
+const COSMETICS = ['hat:pirate', 'hat:wizard', 'hat:crown', 'hat:hood', 'glasses:sun', 'scarf:scarf', 'back:cape', 'back:wings', 'back:jetpack', 'back:halo'];
+const COS_INFO = { 'hat:pirate': ['🏴‍☠️', 'Pirate hat'], 'hat:wizard': ['🧙', 'Wizard hat'], 'hat:crown': ['👑', 'Golden crown'], 'hat:hood': ['🧥', 'Rain hood'], 'glasses:sun': ['😎', 'Sunglasses'], 'scarf:scarf': ['🧣', 'Scarf'], 'back:cape': ['🦸', 'Hero cape'], 'back:wings': ['🦇', 'Dragon wings'], 'back:jetpack': ['🚀', 'Jetpack'], 'back:halo': ['😇', 'Golden halo'] };
+function giveLoot() {
+  const c = CH.c, T = c.tier, items = [];
+  save.chests = save.chests || {}; save.chests[c.id] = Date.now();
+  const coins = 20 + T * 30 + ri(0, 20); save.coins += coins; items.push(['🪙', `${coins} coins`, '']);
+  const cards = T >= 2 ? 2 : 1; save.items.elevate = (save.items.elevate || 0) + cards; items.push(['⬆️', `${cards} Elevation Card${cards > 1 ? 's' : ''}`, 'Use in Team: +1 level']);
+  const locked = COSMETICS.filter((x) => !save.unlocked.includes(x));
+  if (locked.length && Math.random() < 0.55 + T * 0.12) { const it = locked[ri(0, locked.length - 1)]; save.unlocked.push(it); items.push([COS_INFO[it][0], COS_INFO[it][1], 'New look! Try it in 👕 Look']); }
+  if (Math.random() < 0.3 + T * 0.15) {
+    const zone = c.zone === 'core' ? 'wastes' : c.zone, sp = pickZoneSpecies(zone) || GEN_IDS[ri(0, GEN_IDS.length - 1)], mem = newMember(sp);
+    mem.xp = Math.max(0, (zoneLevel(c.x, c.z) - 1) * LV_XP * 0.5); mem.lv = levelOf(mem); mem.maxHp = memberMax(mem); mem.hp = mem.maxHp;
+    if (save.team.length < 7) save.team.push(mem); else { save.garden.push(mem); rebuildGarden(); }
+    markCaught(sp); items.push([eIcon(sp) || '🐾', `${SPECIES[sp].name} (Lv ${mem.lv})`, 'A Monstermon gift!']);
+  }
+  if (T >= 1 && Math.random() < 0.5) { save.items.potion += 1; items.push(['🧪', 'Healing Potion', '']); }
+  stat('chests'); SFX.win(); rumble(0.6, 400); lightPillar(c.x, c.y, c.z, '#ffd34d', 10); spark(c.x, c.y + 1, c.z, '#ffd34d', 30);
+  $('chBody').innerHTML = `<div style="font-size:20px;font-weight:900;margin-top:6px">🎉 The chest is open!</div><div class="loot">${items.map(([i, n, s]) => `<div class="li"><div class="big">${i}</div><b>${n}</b><small>${s}</small></div>`).join('')}</div><div class="row" style="justify-content:center"><button class="btn blue big" id="chDone">Awesome! ▶</button></div>`;
+  $('chDone').onclick = EXTRA_BACK.chestUI; persist(); renderStats(); renderComp();
+}
+// Elevation Cards: +1 level on any Monstermon in your team
+function useElevate(i) {
+  const m = save.team[i]; if (!m) return;
+  if ((save.items.elevate || 0) <= 0) return toast('⬆️ You have no Elevation Cards. Find them in chests!');
+  save.items.elevate--; const before = m.lv || 1; m.xp = (before) * LV_XP; m.lv = levelOf(m); m.maxHp = memberMax(m); m.hp = m.maxHp;
+  SFX.level(); toast(`⬆️ <b>${SPECIES[m.sp].name}</b> is now <b>level ${m.lv}</b>!`);
+  if (i === save.active) { if (comp) spark(comp.x, comp.y + 1, comp.z, '#b48cff', 20); checkEvolution(); }
+  persist(); openTeam();
+}
+MEDALS.push(['treasure', '🎁', 'Treasure Hunter', 'Open 5 chests', () => (save.stats.chests || 0) >= 5], ['mathwiz', '🧮', 'Math Wizard', 'Solve 25 chest puzzles', () => (save.stats.mathRight || 0) >= 25], ['explorer', '🗺️', 'World Explorer', 'Discover all 5 lands', () => Object.keys(save.zones || {}).length >= 5]);
+
 $('helpBtn').onclick = () => openHelp(); $('helpClose').onclick = closeHelp;
 $('dexBtn').onclick = () => openDex(); $('dexClose').onclick = closeDex; $('dex3d').onclick = () => window.open('/monsters.html', '_blank');
 $('shopClose').onclick = closeShop; $('gardenClose').onclick = closeGarden;
@@ -3339,7 +3539,7 @@ const GROUPS = [
   ['Hat', 'hat', OPTIONS.hat, null, 'hatColor', OPTIONS.colors], ['Top / Jacket', 'top', OPTIONS.top, null, 'topColor', OPTIONS.colors, 'top2'],
   ['Pants', 'pants', OPTIONS.pants, null, 'pantsColor', ['#2f4f8f', '#3a3a3a', '#6b8e4e', '#c9a060', '#1e90ff', '#111827', '#e53950', '#f5f5f5']],
   ['Sneakers', 'shoes', OPTIONS.shoes, null, 'shoeColor', OPTIONS.colors], ['Bag', 'bag', OPTIONS.bag, null, 'bagColor', OPTIONS.colors],
-  ['Glasses', 'glasses', OPTIONS.glasses], ['Scarf', 'scarf', OPTIONS.scarf, null, 'scarfColor', OPTIONS.colors],
+  ['Glasses', 'glasses', OPTIONS.glasses], ['Scarf', 'scarf', OPTIONS.scarf, null, 'scarfColor', OPTIONS.colors], ['Back accessory', 'back', OPTIONS.back, null, 'backColor', OPTIONS.colors],
 ];
 function renderCreator() {
   $('groups').innerHTML = `<div class="group"><div class="group-title">Difficulty</div><div class="chips">${[['easy', '🙂 Easy (recommended)'], ['normal', '😤 Normal']].map(([v, l]) => `<button class="chip ${save.settings.diff === v ? 'on' : ''}" data-diff="${v}">${l}</button>`).join('')}</div></div>` + GROUPS.map(([title, key, choices, only, ck, colors, k2]) => `<div class="group"><div class="group-title">${title}</div>
@@ -3475,6 +3675,9 @@ async function boot() {
     if (qs.has('nearshop')) { P.x = SHOP_AT[0] + 1.5; P.z = SHOP_AT[1] + 2.5; cam.yaw = 0.3; }
     if (qs.has('tut')) setTimeout(() => openTutorial(), 500);
     if (qs.has('farfromgreen')) { P.x = SPOTS.green[0] - 4; P.z = SPOTS.green[1] + 26; cam.yaw = 0; }
+    if (qs.has('zone')) { const zz = qs.get('zone'), pt = { wastes: [210, 30], swamp: [10, 220], frost: [-210, 20], peaks: [20, -220] }[zz]; if (pt) { P.x = pt[0]; P.z = pt[1]; } }
+    if (qs.has('fly')) setTimeout(() => { toggleDragon(); P.flyH = 22; }, 500);
+    if (qs.has('chest')) setTimeout(() => { const c = chests.find((x) => x.zone === (qs.get('chest') || 'core')); P.x = c.x + 1.5; P.z = c.z + 1; openChest(c); }, 600);
     if (qs.has('autocatch')) setTimeout(() => { const e = enemies.find((x) => x.kind === 'mon' && x.alive && x.catchable); const before = save.team.length; e.x = P.x + 3; e.z = P.z; applyDamage(e, 99999); const ph0 = cubes.map((c) => c.phase); for (let i = 0; i < 80; i++) updateCubes(0.05, i * 0.05); setTimeout(() => { document.documentElement.dataset.test = JSON.stringify({ sp: e.sp, before, after: save.team.length, team: save.team.map((m) => m.sp), caught: !!save.dex.caught[e.sp], left: enemies.includes(e), ph0, cubes: cubes.length }); }, 500); }, 1500);
     if (qs.has('babatest')) setTimeout(() => { const near = enemies.filter((e) => e.kind === 'mon' && e.alive); near.forEach((e) => { e.x = P.x + 5; e.z = P.z + 3; }); D.x = P.x + 1; D.z = P.z; uncle.visible = true; D.reason = 'rescue'; babaStart(); const ph = []; for (let i = 0; i < 120; i++) { updateBaba(0.05, i * 0.05); if (!ph.includes(BABA.phase)) ph.push(BABA.phase); } for (let i = 0; i < 80; i++) updateUncle(0.05, i * 0.05); document.documentElement.dataset.test = JSON.stringify({ phases: ph, hp: near.map((e) => +(e.hp / e.max).toFixed(3)), ready: near.map((e) => e.ready), dstate: D.state, bubble: bubbleEl && bubbleEl.textContent, playerHp: Math.round(P.hp), hugs: save.stats.hugs, medal: !!save.medals.baba }); }, 1500);
     if (qs.has('fish')) { P.x = LAKE.x + LAKE.r + 1.5; P.z = LAKE.z; setTimeout(startFishing, 500); }
