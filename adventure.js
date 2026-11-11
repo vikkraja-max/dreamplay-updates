@@ -1368,6 +1368,10 @@ function drawMinimap() {
   for (const e of enemies) { if (!e.alive || e.kind === 'hidden' || e.kind === 'dummy' || e.kind === 'cage') continue; mmDot(e.x, e.z, e.boss ? '#ffd34d' : e.kind === 'pylon' ? '#6fe3ff' : e.mood === 'sad' ? '#5a8aff' : '#ff4a4a', e.boss ? 5 : 2.5); }
   if (D.state !== 'away') mmDot(D.x, D.z, '#3ddc84', 4.5);
   if (beacon.visible) { const [sx, sy] = toMM(beacon.position.x, beacon.position.z); mctx.fillStyle = '#ffd34d'; mctx.font = 'bold 16px Segoe UI Emoji, sans-serif'; mctx.textAlign = 'center'; mctx.textBaseline = 'middle'; mctx.fillText('⭐', sx, sy); }
+  { const [gx, gy] = toMM(...SPOTS.green), pulse = 7 + (performance.now() / 400 % 1) * 9;
+    mctx.strokeStyle = 'rgba(61,220,132,' + (1 - (pulse - 7) / 9) + ')'; mctx.lineWidth = 2.5; mctx.beginPath(); mctx.arc(gx, gy, pulse, 0, 7); mctx.stroke();
+    mctx.fillStyle = '#3ddc84'; mctx.beginPath(); mctx.arc(gx, gy, 7, 0, 7); mctx.fill(); mctx.strokeStyle = '#fff'; mctx.lineWidth = 2; mctx.stroke();
+    mctx.fillStyle = '#05220f'; mctx.font = 'bold 10px Segoe UI'; mctx.textAlign = 'center'; mctx.textBaseline = 'middle'; mctx.fillText('G', gx, gy + 0.5); }
   const [px, py] = toMM(P.x, P.z), a = P.yaw;
   mctx.save(); mctx.translate(px, py); mctx.rotate(-a + Math.PI);
   mctx.fillStyle = '#ffffff'; mctx.strokeStyle = '#000'; mctx.lineWidth = 1.5; mctx.beginPath(); mctx.moveTo(0, -7); mctx.lineTo(5, 5); mctx.lineTo(0, 2); mctx.lineTo(-5, 5); mctx.closePath(); mctx.fill(); mctx.stroke();
@@ -2296,7 +2300,7 @@ function openParent() {
 
 // ====================================================================== per-frame updates for all of the above
 function updateExtras(dt, t) {
-  updateTalkBubble(); updateMorph(dt, t); updateLabIdle(t); updateSpawner(dt); updateBaba(dt, t); updateRace(dt, t); updateCrease(dt); updateLegend(); updateParent(dt); updateTrophies();
+  updateGreenBeacon(t); updateTalkBubble(); updateMorph(dt, t); updateLabIdle(t); updateSpawner(dt); updateBaba(dt, t); updateRace(dt, t); updateCrease(dt); updateLegend(); updateParent(dt); updateTrophies();
   if (state === 'play' && save.team.length) { for (const m of save.team) { happy(m); m.happy = Math.max(0, m.happy - dt / 30); } }
   if (RIDE.on && (!comp || !RIDEABLE[comp.m.sp])) dismount();
   raceNpc.userData.anim && !RACE.on && raceNpc.userData.anim(t, {});
@@ -3297,6 +3301,34 @@ $('tutNext').onclick = () => { if (tutI < tutSlides().length - 1) { tutI++; rend
 $('tutBack').onclick = () => { if (tutI > 0) { tutI--; renderTut(); } };
 $('tutSkip').onclick = () => endTutorial();
 
+
+// ====================================================================== PROFESSOR GREEN is always easy to find: a green light from the sky + a big green marker on the map
+const greenBeam = new THREE.Group(); scene.add(greenBeam);
+{
+  const gy = height(...SPOTS.green);
+  const beamMat = new THREE.MeshBasicMaterial({ color: 0x3ddc84, transparent: true, opacity: 0.32, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending });
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.9, 60, 20, 1, true), beamMat); core.position.y = 30; greenBeam.add(core);
+  const halo = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.9, 60, 20, 1, true), new THREE.MeshBasicMaterial({ color: 0x8affc0, transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending })); halo.position.y = 30; greenBeam.add(halo);
+  const ringMat = new THREE.MeshBasicMaterial({ color: 0x3ddc84, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false });
+  greenBeam.userData.rings = [0, 1].map(() => { const r = new THREE.Mesh(new THREE.RingGeometry(1.5, 1.75, 40), ringMat.clone()); r.rotation.x = -Math.PI / 2; r.position.y = 0.08; greenBeam.add(r); return r; });
+  const light = new THREE.PointLight(0x3ddc84, 6, 12, 1.6); light.position.y = 3; greenBeam.add(light);
+  greenBeam.position.set(SPOTS.green[0], gy, SPOTS.green[1]);
+  greenBeam.userData.core = core; greenBeam.userData.halo = halo;
+}
+// a floating name tag above him, visible from far away
+document.body.insertAdjacentHTML('beforeend', `<div id="greenTag" style="position:fixed;z-index:4;transform:translate(-50%,-100%);pointer-events:none;padding:5px 12px;border-radius:999px;font-weight:900;font-size:14px;color:#eafff2;white-space:nowrap;background:rgba(10,40,26,.7);backdrop-filter:blur(6px);box-shadow:0 0 0 2px #3ddc84,0 0 18px rgba(61,220,132,.6)">👨‍🔬 Professor Green <span id="greenDist" style="opacity:.75;font-weight:700"></span></div>`);
+function updateGreenBeacon(t) {
+  const d = dist2(P.x, P.z, SPOTS.green[0], SPOTS.green[1]);
+  greenBeam.userData.core.material.opacity = 0.22 + Math.sin(t * 2.4) * 0.1;
+  greenBeam.userData.halo.material.opacity = 0.07 + Math.sin(t * 2.4 + 1) * 0.04;
+  greenBeam.userData.rings.forEach((r, i) => { const k = ((t * 0.6 + i * 0.5) % 1); r.scale.setScalar(0.6 + k * 1.8); r.material.opacity = 0.8 * (1 - k); });
+  greenBeam.visible = d > 3;   // hide the light when you are standing right next to him
+  const tag = $('greenTag'), p = new THREE.Vector3(SPOTS.green[0], green.position.y + 2.9, SPOTS.green[1]).project(camera);
+  if (state !== 'play' || p.z > 1 || d < 4 || Math.abs(p.x) > 1.05 || Math.abs(p.y) > 1.05) { tag.style.display = 'none'; return; }
+  tag.style.display = ''; tag.style.left = ((p.x + 1) / 2 * innerWidth) + 'px'; tag.style.top = ((1 - p.y) / 2 * innerHeight) + 'px';
+  $('greenDist').textContent = Math.round(d) + ' m';
+}
+
 $('helpBtn').onclick = () => openHelp(); $('helpClose').onclick = closeHelp;
 $('dexBtn').onclick = () => openDex(); $('dexClose').onclick = closeDex; $('dex3d').onclick = () => window.open('/monsters.html', '_blank');
 $('shopClose').onclick = closeShop; $('gardenClose').onclick = closeGarden;
@@ -3442,6 +3474,7 @@ async function boot() {
     if (qs.has('tedit')) setTimeout(() => { startEdit(); selectBtn('attack'); }, 700);
     if (qs.has('nearshop')) { P.x = SHOP_AT[0] + 1.5; P.z = SHOP_AT[1] + 2.5; cam.yaw = 0.3; }
     if (qs.has('tut')) setTimeout(() => openTutorial(), 500);
+    if (qs.has('farfromgreen')) { P.x = SPOTS.green[0] - 4; P.z = SPOTS.green[1] + 26; cam.yaw = 0; }
     if (qs.has('autocatch')) setTimeout(() => { const e = enemies.find((x) => x.kind === 'mon' && x.alive && x.catchable); const before = save.team.length; e.x = P.x + 3; e.z = P.z; applyDamage(e, 99999); const ph0 = cubes.map((c) => c.phase); for (let i = 0; i < 80; i++) updateCubes(0.05, i * 0.05); setTimeout(() => { document.documentElement.dataset.test = JSON.stringify({ sp: e.sp, before, after: save.team.length, team: save.team.map((m) => m.sp), caught: !!save.dex.caught[e.sp], left: enemies.includes(e), ph0, cubes: cubes.length }); }, 500); }, 1500);
     if (qs.has('babatest')) setTimeout(() => { const near = enemies.filter((e) => e.kind === 'mon' && e.alive); near.forEach((e) => { e.x = P.x + 5; e.z = P.z + 3; }); D.x = P.x + 1; D.z = P.z; uncle.visible = true; D.reason = 'rescue'; babaStart(); const ph = []; for (let i = 0; i < 120; i++) { updateBaba(0.05, i * 0.05); if (!ph.includes(BABA.phase)) ph.push(BABA.phase); } for (let i = 0; i < 80; i++) updateUncle(0.05, i * 0.05); document.documentElement.dataset.test = JSON.stringify({ phases: ph, hp: near.map((e) => +(e.hp / e.max).toFixed(3)), ready: near.map((e) => e.ready), dstate: D.state, bubble: bubbleEl && bubbleEl.textContent, playerHp: Math.round(P.hp), hugs: save.stats.hugs, medal: !!save.medals.baba }); }, 1500);
     if (qs.has('fish')) { P.x = LAKE.x + LAKE.r + 1.5; P.z = LAKE.z; setTimeout(startFishing, 500); }
