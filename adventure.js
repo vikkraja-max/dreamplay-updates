@@ -2409,7 +2409,7 @@ function updateSpawner(dt) {
   if (state !== 'play' || !reached('mission1')) return;
   spawnTick -= dt; if (spawnTick > 0) return; spawnTick = 4;
   // forget far-away wild ones
-  for (const e of [...enemies]) if (e.wild && e.alive && !e.capturing && !e.autoCatch && dist2(e.x, e.z, P.x, P.z) > 75 && !(RMT.on && dist2(e.x, e.z, RMT.x, RMT.z) < 70)) removeEnemy(e);
+  for (const e of [...enemies]) if (e.wild && e.alive && !e.capturing && !e.autoCatch && dist2(e.x, e.z, P.x, P.z) > 75 && !nearRemote(e.x, e.z, 70)) removeEnemy(e);
   const near = enemies.filter((e) => e.kind === 'mon' && e.alive && dist2(e.x, e.z, P.x, P.z) < 45).length;
   if (near >= 9) return;
   for (let k = 0; k < 12; k++) {
@@ -3624,140 +3624,181 @@ function loop(now) {
 }
 
 
-// ====================================================================== CO-OP: play together on two devices (PeerJS, one private family room)
-// The first device that opens the game becomes the room "host", the second one joins it. Nobody types a code.
-// Each player keeps their own save. You see each other, your Monstermon, and the wild monsters near both of you
-// are shared: hit them together, and when one of you catches a monster, the other one (if close) gets one too.
+// ====================================================================== CO-OP: one shared world for everyone who has the game link (PeerJS)
+// The first device that opens the game becomes the world "server" (host); everyone else joins it automatically.
+// The host relays everybody's moves to everybody, and sets the time of day and the weather for the whole world.
+// If the host leaves, one of the others takes over by itself. Each player keeps their own save and story.
+// Wild monsters near friends are shared: hit them together; when one of you catches one, friends close by get one too.
 const COOP_ROOM = qs.get('room') || 'mmwf-kraja-family-q7x2k9v4';
-const COOP = { peer: null, conn: null, role: '', status: 'off', retryT: 0, lastRx: 0, sendT: 0, wildT: 0, lookT: 0, sentLook: '', gen: 0 };
-const RMT = { on: false, name: 'Friend', look: '', av: null, comp: null, compSp: '', dragon: null, x: 0, y: 0, z: 0, yaw: 0, mode: 'idle', tx: 0, ty: 0, tz: 0, tyaw: 0, c: null, dr: 0, tag: null, seen: {} };
+const COOP_MAX = 8;
+const COOP = { peer: null, conns: new Map(), hostConn: null, role: '', status: 'off', myId: '', hostRx: 0, sendT: 0, wildT: 0, lookT: 0, worldT: 0, sentLook: '', gen: 0, goIdx: 0 };
+const REMOTES = new Map();          // peer id -> { name, look, av, comp, compSp, dragon, x,y,z,yaw, tx,ty,tz,tyaw, mode, c, dr, tag, lastRx, hi }
+const RCOL = ['#ff5ad6', '#ffd34d', '#6fe3ff', '#9ad66a', '#ff9a4a', '#b48cff', '#ffffff'];
 const coopOn = () => save.settings.coop !== false && typeof window.Peer === 'function' && (!qs.has('t') || qs.has('coop'));
+const coopLinked = () => REMOTES.size > 0 && (COOP.role === 'host' ? COOP.conns.size > 0 : !!(COOP.hostConn && COOP.hostConn.open));
+const nearRemote = (x, z, r) => { for (const R of REMOTES.values()) if (dist2(x, z, R.x, R.z) < r) return R; return null; };
 function coopLog(s) { console.log('[coop]', s); }
 function coopStart() {
   if (save.settings.coop === undefined) save.settings.coop = true;
   if (!coopOn() || COOP.peer) return;
   COOP.gen++; tryHost(COOP.gen);
 }
-function coopStop() {
-  COOP.gen++;
-  try { if (COOP.conn) COOP.conn.close(); } catch (e) { }
+function closeAll() {
+  for (const c of COOP.conns.values()) { try { c.close(); } catch (e) { } }
+  COOP.conns.clear();
+  try { if (COOP.hostConn) COOP.hostConn.close(); } catch (e) { }
+  COOP.hostConn = null;
   try { if (COOP.peer) COOP.peer.destroy(); } catch (e) { }
-  COOP.peer = null; COOP.conn = null; COOP.role = ''; COOP.status = 'off'; remoteGone(true); renderStats();
+  COOP.peer = null;
 }
+function coopStop() { COOP.gen++; closeAll(); COOP.role = ''; COOP.status = 'off'; for (const id of [...REMOTES.keys()]) dropRemote(id, true); renderStats(); }
 function coopRetry(ms) {
-  const g = ++COOP.gen;
-  try { if (COOP.peer) COOP.peer.destroy(); } catch (e) { }
-  COOP.peer = null; COOP.conn = null; COOP.status = 'looking';
+  const g = ++COOP.gen; closeAll(); COOP.status = 'looking';
   setTimeout(() => { if (g === COOP.gen && coopOn()) tryHost(g); }, ms);
 }
-function newPeer(id) {
-  // PeerJS free cloud server for the "hello", then a direct WebRTC link between the two devices (STUN + PeerJS TURN fallback)
-  return id ? new window.Peer(id, { debug: 0 }) : new window.Peer({ debug: 0 });
-}
+const newPeer = (id) => id ? new window.Peer(id, { debug: 0 }) : new window.Peer({ debug: 0 });
+function keepAlive(p, g) { p.on('disconnected', () => { if (g === COOP.gen && !p.destroyed) setTimeout(() => { try { if (g === COOP.gen && !p.destroyed) p.reconnect(); } catch (e) { } }, 2000); }); }
 function tryHost(g) {
   COOP.status = 'looking'; COOP.role = 'host';
-  const p = newPeer(COOP_ROOM + '-host'); COOP.peer = p;
-  p.on('open', () => { if (g !== COOP.gen) return; coopLog('I am the room host, waiting for my friend'); });
-  p.on('connection', (c) => { if (g !== COOP.gen) return; if (COOP.conn && COOP.conn !== c) { try { COOP.conn.close(); } catch (e) { } } setupConn(c, g); });
-  p.on('disconnected', () => { if (g === COOP.gen && !p.destroyed) setTimeout(() => { try { if (g === COOP.gen) p.reconnect(); } catch (e) { } }, 2000); });
+  const p = newPeer(COOP_ROOM + '-host'); COOP.peer = p; keepAlive(p, g);
+  p.on('open', (id) => { if (g !== COOP.gen) return; COOP.myId = id; coopLog('I run the world (host)'); });
+  p.on('connection', (c) => { if (g === COOP.gen) hostAccept(c, g); });
   p.on('error', (err) => {
     if (g !== COOP.gen) return;
-    if (err.type === 'unavailable-id') { try { p.destroy(); } catch (e) { } COOP.peer = null; tryGuest(g); }   // my friend is already the host: join them
-    else if (!COOP.conn) { coopLog('host error ' + err.type); coopRetry(8000); }
+    if (err.type === 'unavailable-id') { try { p.destroy(); } catch (e) { } COOP.peer = null; tryGuest(g); }   // the world already runs on another device: join it
+    else if (err.type !== 'peer-unavailable' && !COOP.conns.size) { coopLog('host error ' + err.type); coopRetry(8000); }
   });
 }
 function tryGuest(g) {
   COOP.role = 'guest'; COOP.status = 'looking';
-  const p = newPeer(); COOP.peer = p;
-  p.on('open', () => {
+  const p = newPeer(); COOP.peer = p; keepAlive(p, g);
+  p.on('open', (id) => {
     if (g !== COOP.gen) return;
+    COOP.myId = id;
     const c = p.connect(COOP_ROOM + '-host', { reliable: true, serialization: 'json' });
-    setupConn(c, g);
-    setTimeout(() => { if (g === COOP.gen && !(COOP.conn && COOP.conn.open)) coopRetry(1500); }, 12000);
+    c.on('open', () => {
+      if (g !== COOP.gen) return;
+      COOP.hostConn = c; COOP.status = 'online'; COOP.hostRx = performance.now(); COOP.sentLook = '';
+      coopSend(myHi()); coopLog('joined the world');
+    });
+    c.on('data', (m) => { if (g === COOP.gen) { COOP.hostRx = performance.now(); coopRx(m); } });
+    c.on('close', () => { if (g !== COOP.gen) return; coopLog('lost the world host'); lostAll(); coopRetry(1500 + Math.random() * 1500); });
+    c.on('error', () => { });
+    setTimeout(() => { if (g === COOP.gen && !(COOP.hostConn && COOP.hostConn.open)) coopRetry(1500); }, 12000);
   });
-  p.on('error', (err) => { if (g !== COOP.gen) return; coopLog('guest error ' + err.type); coopRetry(err.type === 'peer-unavailable' ? 2500 : 6000); });
-  p.on('disconnected', () => { if (g === COOP.gen && !p.destroyed) setTimeout(() => { try { if (g === COOP.gen) p.reconnect(); } catch (e) { } }, 2000); });
+  p.on('error', (err) => { if (g !== COOP.gen) return; coopLog('guest error ' + err.type); coopRetry(err.type === 'peer-unavailable' ? 2000 + Math.random() * 1500 : 6000); });
 }
-function setupConn(c, g) {
+function hostAccept(c, g) {
   c.on('open', () => {
     if (g !== COOP.gen) return;
-    COOP.conn = c; COOP.status = 'online'; COOP.lastRx = performance.now(); COOP.sentLook = '';
-    coopSend({ t: 'hi', name: save.name || 'Friend', look: save.avatar, ver: window.DP_VERSION || '' });
-    coopLog('connected as ' + COOP.role);
+    if (COOP.conns.size >= COOP_MAX - 1) { try { c.send({ t: 'full' }); } catch (e) { } setTimeout(() => c.close(), 500); return; }
+    const old = COOP.conns.get(c.peer); if (old && old !== c) { try { old.close(); } catch (e) { } }
+    c.lastRx = performance.now(); COOP.conns.set(c.peer, c); COOP.status = 'online';
+    // tell the newcomer about the world: me, everybody else, the time and the weather
+    try {
+      c.send({ ...myHi(), f: COOP.myId });
+      for (const [id, R] of REMOTES) if (id !== c.peer && R.hi) c.send(R.hi);
+      c.send(worldMsg());
+    } catch (e) { }
   });
-  c.on('data', (m) => { if (g === COOP.gen) { COOP.lastRx = performance.now(); coopRx(m); } });
-  c.on('close', () => { if (g !== COOP.gen || COOP.conn !== c) return; coopLog('link closed'); remoteGone(); COOP.conn = null; if (COOP.role === 'guest') coopRetry(2000); else COOP.status = 'looking'; });
+  c.on('data', (m) => {
+    if (g !== COOP.gen || !m || typeof m !== 'object') return;
+    c.lastRx = performance.now(); m.f = c.peer;               // the host stamps who sent it
+    if (m.t === 'hi') { const R = REMOTES.get(c.peer); if (R) R.hi = m; }
+    if (!m.to || m.to === COOP.myId) coopRx(m);
+    if (m.to !== COOP.myId) relay(m, c);
+  });
+  c.on('close', () => {
+    if (g !== COOP.gen || COOP.conns.get(c.peer) !== c) return;
+    COOP.conns.delete(c.peer); dropRemote(c.peer); relay({ t: 'bye', f: c.peer }, null);
+    if (!COOP.conns.size) COOP.status = 'looking';
+  });
   c.on('error', () => { });
 }
-function coopSend(m) { try { if (COOP.conn && COOP.conn.open) COOP.conn.send(m); } catch (e) { } }
-const coopLinked = () => !!(COOP.conn && COOP.conn.open && RMT.on);
+function relay(m, from) { for (const c of COOP.conns.values()) if (c !== from && c.open && (!m.to || c.peer === m.to)) { try { c.send(m); } catch (e) { } } }
+function coopSend(m) {
+  m.f = COOP.myId;
+  try {
+    if (COOP.role === 'host') relay(m, null);
+    else if (COOP.hostConn && COOP.hostConn.open) COOP.hostConn.send(m);
+  } catch (e) { }
+}
+const myHi = () => ({ t: 'hi', name: save.name || 'Friend', look: save.avatar, x: +P.x.toFixed(1), z: +P.z.toFixed(1), ver: window.DP_VERSION || '' });
+const worldMsg = () => ({ t: 'world', f: COOP.myId, time: +save.time.toFixed(4), wx: WX.type });
 
 // ---- what I receive
 function coopRx(m) {
   if (!m || typeof m !== 'object') return;
+  if (m.t === 'full') { toast(`🌍 The world is full (${COOP_MAX} players). Try again later.`, 5000); coopStop(); return; }
+  if (m.t === 'world') {
+    if (COOP.role === 'host') return;
+    if (Math.abs(save.time - m.time) > 0.004) save.time = m.time;
+    if (WEATHERS[m.wx] && WX.type !== m.wx) setWeather(m.wx);
+    WX.timer = 30;                // the weather follows the world host
+    return;
+  }
+  const id = m.f; if (!id || id === COOP.myId) return;
+  if (m.t === 'bye') { dropRemote(id); return; }
+  let R = REMOTES.get(id);
   if (m.t === 'hi') {
-    const first = !RMT.on; RMT.name = String(m.name || 'Friend').slice(0, 20);
-    setRemoteLook(m.look);
-    if (first) {
-      RMT.on = true; RMT.tx = RMT.x = m.x || P.x + 3; RMT.tz = RMT.z = m.z || P.z;
-      toast(`🤝 <b>${RMT.name}</b> joined your world! Look for the 🤝 on the map. Pause ▸ 🤝 Go to ${RMT.name} to jump next to them.`, 6000); SFX.win();
-      coopSend({ t: 'hi', name: save.name || 'Friend', look: save.avatar });     // so they know me too
-    }
+    const first = !R;
+    if (first) { R = { id, name: 'Friend', look: '', av: null, comp: null, compSp: '', dragon: null, x: +m.x || P.x + 3, y: P.y, z: +m.z || P.z, yaw: 0, tx: +m.x || P.x + 3, ty: P.y, tz: +m.z || P.z, tyaw: 0, mode: 'idle', c: null, dr: 0, tag: null, col: RCOL[[...REMOTES.keys()].length % RCOL.length] }; REMOTES.set(id, R); }
+    R.name = String(m.name || 'Friend').slice(0, 20); R.hi = m; R.lastRx = performance.now();
+    setRemoteLook(R, m.look);
+    if (first) { toast(`🤝 <b>${R.name}</b> is in the world with you! Look for the 🤝 on the map. Pause ▸ 🤝 Go to a friend.`, 6000); SFX.win(); }
     renderStats(); return;
   }
-  if (!RMT.on) return;
+  if (!R) return;
+  R.lastRx = performance.now();
   if (m.t === 's') {
-    RMT.tx = m.x; RMT.ty = m.y; RMT.tz = m.z; RMT.tyaw = m.yaw; RMT.mode = m.mode || 'idle'; RMT.dr = m.dr ? 1 : 0; RMT.c = m.c || null;
-    if (!RMT.av || RMT.snap) { RMT.x = m.x; RMT.y = m.y; RMT.z = m.z; RMT.yaw = m.yaw; RMT.snap = false; }
-    if (Array.isArray(m.w)) syncPuppets(m.w);
+    R.tx = m.x; R.ty = m.y; R.tz = m.z; R.tyaw = m.yaw; R.mode = m.mode || 'idle'; R.dr = m.dr ? 1 : 0; R.c = m.c || null;
+    if (Array.isArray(m.w)) syncPuppets(id, m.w);
     return;
   }
   if (m.t === 'dmg') { const e = enemies.find((x) => x.id === m.id && x.alive && !x.puppet); if (e) applyDamage(e, Math.max(0, Math.min(5000, +m.d || 0))); return; }
-  if (m.t === 'caught') { teamCatch(m); return; }
-  if (m.t === 'wave') { floatText(RMT.x, RMT.y + 2.6, RMT.z, '👋', '#ffffff'); toast(`👋 <b>${RMT.name}</b> waves at you!`, 2500); return; }
+  if (m.t === 'caught') { teamCatch(R, m); return; }
+  if (m.t === 'wave') { floatText(R.x, R.y + 2.6, R.z, '👋', '#ffffff'); toast(`👋 <b>${R.name}</b> waves at everybody!`, 2500); return; }
 }
-function setRemoteLook(look) {
+function setRemoteLook(R, look) {
   if (!look || typeof look !== 'object') return;
-  const key = JSON.stringify(look); if (key === RMT.look && RMT.av) return;
-  RMT.look = key; if (RMT.av) scene.remove(RMT.av);
-  try { RMT.av = buildAvatar({ ...DEFAULT_AVATAR, ...look }); } catch (e) { RMT.av = buildAvatar({ ...DEFAULT_AVATAR }); }
-  RMT.av.position.set(RMT.x, RMT.y, RMT.z); scene.add(RMT.av);
+  const key = JSON.stringify(look); if (key === R.look && R.av) return;
+  R.look = key; if (R.av) scene.remove(R.av);
+  try { R.av = buildAvatar({ ...DEFAULT_AVATAR, ...look }); } catch (e) { R.av = buildAvatar({ ...DEFAULT_AVATAR }); }
+  R.av.position.set(R.x, R.y, R.z); scene.add(R.av);
 }
-function remoteGone(silent) {
-  if (RMT.on && !silent) toast(`👋 <b>${RMT.name}</b> left the game. When they come back you will find each other again.`, 4500);
-  RMT.on = false; RMT.look = '';
-  if (RMT.av) { scene.remove(RMT.av); RMT.av = null; }
-  if (RMT.comp) { scene.remove(RMT.comp); RMT.comp = null; RMT.compSp = ''; }
-  if (RMT.dragon) RMT.dragon.visible = false;
-  if (RMT.tag) { RMT.tag.remove(); RMT.tag = null; }
-  for (const e of [...enemies]) if (e.puppet) removeEnemy(e);
-  renderStats();
+function dropRemote(id, silent) {
+  const R = REMOTES.get(id); if (!R) return;
+  if (!silent) toast(`👋 <b>${R.name}</b> left the world.`, 3500);
+  if (R.av) scene.remove(R.av); if (R.comp) scene.remove(R.comp); if (R.dragon) scene.remove(R.dragon); if (R.tag) R.tag.remove();
+  for (const e of [...enemies]) if (e.puppet && e.owner === id) removeEnemy(e);
+  REMOTES.delete(id); renderStats();
+}
+function lostAll() {
+  if (REMOTES.size) toast('📡 Lost the connection to the world. Finding it again…', 3500);
+  for (const id of [...REMOTES.keys()]) dropRemote(id, true);
 }
 
-// ---- shared wild monsters: the device that spawned a monster runs it; the other one shows a "puppet" copy
+// ---- shared wild monsters: the device that spawned a monster runs it; the others show a "puppet" copy
 function shareList() {
   const out = [];
   for (const e of enemies) {
     if (!e.wild || e.puppet || !e.alive || e.autoCatch || e.capturing || e.kind !== 'mon') continue;
-    if (dist2(e.x, e.z, RMT.x, RMT.z) > 70) continue;
+    if (!nearRemote(e.x, e.z, 70)) continue;
     out.push([e.id, e.sp, +e.x.toFixed(2), +e.z.toFixed(2), +e.yaw.toFixed(2), Math.round(e.hp), Math.round(e.max), e.lvl || 1, e.mood === 'sad' ? 1 : 0]);
     if (out.length >= 14) break;
   }
   return out;
 }
-function syncPuppets(list) {
+function syncPuppets(owner, list) {
   const now = performance.now();
   for (const [id, sp, x, z, yaw, hp, max, lvl, sad] of list) {
     if (!SPECIES[sp]) continue;
-    let e = enemies.find((q) => q.puppet && q.netId === id);
-    if (!e) {
-      e = makeEnemy(sp, x, z, { catchable: false, mood: sad ? 'sad' : 'angry' });
-      e.puppet = true; e.netId = id; e.wild = false; e.state = 'idle'; e.px = x; e.pz = z;
-    }
+    let e = enemies.find((q) => q.puppet && q.owner === owner && q.netId === id);
+    if (!e) { e = makeEnemy(sp, x, z, { catchable: false, mood: sad ? 'sad' : 'angry' }); e.puppet = true; e.owner = owner; e.netId = id; e.wild = false; e.state = 'idle'; }
     if (hp < e.hp - 0.5) { e.hitT = 0.25; hitFlash(e); }
     e.tx = x; e.tz = z; e.tyaw = yaw; e.hp = Math.max(1, hp); e.max = max; e.lvl = lvl; e.seenAt = now;
   }
-  for (const e of [...enemies]) if (e.puppet && now - (e.seenAt || 0) > 1500) removeEnemy(e);
+  for (const e of [...enemies]) if (e.puppet && e.owner === owner && now - (e.seenAt || 0) > 1500) removeEnemy(e);
 }
 function updatePuppet(e, dt) {
   const k = 1 - Math.exp(-dt * 10);
@@ -3765,26 +3806,27 @@ function updatePuppet(e, dt) {
   let d = (e.tyaw ?? e.yaw) - e.yaw; d = Math.atan2(Math.sin(d), Math.cos(d)); e.yaw += d * k;
   e.y = height(e.x, e.z); e.model.position.set(e.x, e.y, e.z); e.model.rotation.y = e.yaw;
   if (e.hitT > 0) e.hitT -= dt;
+  if (performance.now() - (e.seenAt || 0) > 3000) removeEnemy(e);
 }
 function puppetHit(e, dmg) {
-  // I hit my friend's monster: show it here, the real hit happens on their device
-  if (!coopLinked()) return;
-  coopSend({ t: 'dmg', id: e.netId, d: Math.round(dmg) });
+  // I hit a friend's monster: show it here, the real hit happens on the friend's device
+  coopSend({ t: 'dmg', to: e.owner, id: e.netId, d: Math.round(dmg) });
   SFX.hit(); e.hitT = 0.25; spark(e.x, e.y + 1, e.z, '#fff2a8', 8); hitFlash(e);
   floatText(e.x, e.y + 2, e.z, Math.round(dmg), '#ffffff');
   e.hp = Math.max(1, e.hp - dmg);
 }
 function coopCaught(e) {
-  if (!coopLinked() || !e.wild || dist2(e.x, e.z, RMT.x, RMT.z) > 60) return;
+  if (!coopLinked() || !e.wild) return;
+  const near = [...REMOTES.values()].filter((R) => dist2(e.x, e.z, R.x, R.z) < 60); if (!near.length) return;
   coopSend({ t: 'caught', sp: e.sp, x: e.x, z: e.z });
-  setTimeout(() => toast(`🤝 TEAM CATCH! <b>${RMT.name}</b> was with you, so they get a <b>${SPECIES[e.sp].name}</b> too!`, 4000), 2500);
+  setTimeout(() => toast(`🤝 TEAM CATCH! ${near.map((R) => '<b>' + R.name + '</b>').join(', ')} ${near.length > 1 ? 'were' : 'was'} with you, so they get a <b>${SPECIES[e.sp].name}</b> too!`, 4000), 2500);
 }
-function teamCatch(m) {
+function teamCatch(R, m) {
   if (!SPECIES[m.sp] || dist2(m.x, m.z, P.x, P.z) > 75) return;
   const mem = newMember(m.sp); markCaught(m.sp); stat('teamCatches');
   if (save.team.length < 7) save.team.push(mem); else { save.garden.push(mem); rebuildGarden(); }
   if (!comp) { save.active = 0; spawnCompanion(save.team[0]); }
-  toast(`🤝🧊 TEAM CATCH! <b>${RMT.name}</b> caught <b>${SPECIES[m.sp].name}</b> and you get one too! ${save.team.includes(mem) ? `(team ${save.team.length}/7)` : '(it went to the garden)'}`, 5000);
+  toast(`🤝🧊 TEAM CATCH! <b>${R.name}</b> caught <b>${SPECIES[m.sp].name}</b> and you get one too! ${save.team.includes(mem) ? `(team ${save.team.length}/7)` : '(it went to the garden)'}`, 5000);
   SFX.win(); spark(P.x, P.y + 1.5, P.z, '#9fe8ff', 24);
   save.coins += 6; giveXP(20); persist(); renderComp();
 }
@@ -3793,72 +3835,80 @@ function teamCatch(m) {
 function updateCoop(dt, t) {
   if (!coopOn()) return;
   const now = performance.now();
-  if (COOP.conn && COOP.conn.open && now - COOP.lastRx > 9000) { coopLog('no data for 9 s'); try { COOP.conn.close(); } catch (e) { } remoteGone(); COOP.conn = null; if (COOP.role === 'guest') coopRetry(1500); else COOP.status = 'looking'; }
-  if (COOP.conn && COOP.conn.open && state === 'play') {
-    COOP.sendT -= dt; COOP.wildT -= dt; COOP.lookT -= dt;
+  if (COOP.role === 'guest' && COOP.hostConn && COOP.hostConn.open && now - COOP.hostRx > 9000) { coopLog('world host silent for 9 s'); lostAll(); coopRetry(1500 + Math.random() * 1500); }
+  if (COOP.role === 'host') for (const c of [...COOP.conns.values()]) if (now - (c.lastRx || now) > 12000) { try { c.close(); } catch (e) { } COOP.conns.delete(c.peer); dropRemote(c.peer); relay({ t: 'bye', f: c.peer }, null); }
+  for (const [id, R] of [...REMOTES]) if (now - (R.lastRx || now) > 12000) dropRemote(id);
+  const online = COOP.role === 'host' ? COOP.conns.size > 0 : !!(COOP.hostConn && COOP.hostConn.open);
+  if (online && state === 'play') {
+    COOP.sendT -= dt; COOP.wildT -= dt; COOP.lookT -= dt; COOP.worldT -= dt;
     if (COOP.sendT <= 0) {
       COOP.sendT = 0.1;
       const msg = { t: 's', x: +P.x.toFixed(2), y: +P.y.toFixed(2), z: +P.z.toFixed(2), yaw: +P.yaw.toFixed(2), mode: P.mode, dr: RIDE.dragon ? 1 : 0, c: comp && comp.model.visible ? [comp.m.sp, +comp.x.toFixed(2), +(comp.y || P.y).toFixed(2), +comp.z.toFixed(2), +(comp.model.rotation.y || 0).toFixed(2)] : 0 };
-      if (COOP.wildT <= 0 && RMT.on) { COOP.wildT = 0.2; msg.w = shareList(); }
+      if (COOP.wildT <= 0 && REMOTES.size) { COOP.wildT = 0.2; msg.w = shareList(); }
       coopSend(msg);
     }
-    if (COOP.lookT <= 0) { COOP.lookT = 2; const k = JSON.stringify(save.avatar) + save.name; if (k !== COOP.sentLook) { COOP.sentLook = k; coopSend({ t: 'hi', name: save.name || 'Friend', look: save.avatar }); } }
+    if (COOP.lookT <= 0) { COOP.lookT = 2; const k = JSON.stringify(save.avatar) + save.name; if (k !== COOP.sentLook) { COOP.sentLook = k; coopSend(myHi()); } }
+    if (COOP.role === 'host' && COOP.worldT <= 0) { COOP.worldT = 3; relay(worldMsg(), null); }
   }
-  if (!RMT.on || !RMT.av) return;
-  // smooth the friend's movement
+  for (const R of REMOTES.values()) updateRemote(R, dt, t);
+}
+function updateRemote(R, dt, t) {
+  if (!R.av) return;
   const k = 1 - Math.exp(-dt * 12);
-  if (Math.hypot(RMT.tx - RMT.x, RMT.tz - RMT.z) > 25) { RMT.x = RMT.tx; RMT.z = RMT.tz; RMT.y = RMT.ty; }
-  RMT.x += (RMT.tx - RMT.x) * k; RMT.y += (RMT.ty - RMT.y) * k; RMT.z += (RMT.tz - RMT.z) * k;
-  let d = RMT.tyaw - RMT.yaw; d = Math.atan2(Math.sin(d), Math.cos(d)); RMT.yaw += d * k;
-  RMT.av.position.set(RMT.x, RMT.y, RMT.z); RMT.av.rotation.y = RMT.yaw;
-  animateAvatar(RMT.av, t, RMT.dr ? 'idle' : RMT.mode, 1);
-  // their dragon
-  if (RMT.dr) {
-    if (!RMT.dragon) RMT.dragon = makeDragon();
-    RMT.dragon.visible = true; RMT.dragon.position.set(RMT.x, RMT.y - 0.15, RMT.z); RMT.dragon.rotation.y = RMT.yaw;
-    try { RMT.dragon.userData.anim(t, true); } catch (e) { }
-    RMT.av.userData.parts.legs.forEach((l, i) => { l.rotation.x = -1.35; l.rotation.z = i ? -0.35 : 0.35; });
-  } else if (RMT.dragon) RMT.dragon.visible = false;
-  // their Monstermon
-  const c = RMT.c;
+  if (Math.hypot(R.tx - R.x, R.tz - R.z) > 25) { R.x = R.tx; R.z = R.tz; R.y = R.ty; }
+  R.x += (R.tx - R.x) * k; R.y += (R.ty - R.y) * k; R.z += (R.tz - R.z) * k;
+  let d = R.tyaw - R.yaw; d = Math.atan2(Math.sin(d), Math.cos(d)); R.yaw += d * k;
+  R.av.position.set(R.x, R.y, R.z); R.av.rotation.y = R.yaw;
+  animateAvatar(R.av, t, R.dr ? 'idle' : R.mode, 1);
+  if (R.dr) {
+    if (!R.dragon) R.dragon = makeDragon();
+    R.dragon.visible = true; R.dragon.position.set(R.x, R.y - 0.15, R.z); R.dragon.rotation.y = R.yaw;
+    try { R.dragon.userData.anim(t, true); } catch (e) { }
+    R.av.userData.parts.legs.forEach((l, i) => { l.rotation.x = -1.35; l.rotation.z = i ? -0.35 : 0.35; });
+  } else if (R.dragon) R.dragon.visible = false;
+  const c = R.c;
   if (c && SPECIES[c[0]]) {
-    if (RMT.compSp !== c[0]) { if (RMT.comp) scene.remove(RMT.comp); RMT.comp = buildMon(c[0], 'happy'); RMT.comp.position.set(c[1], c[2], c[3]); scene.add(RMT.comp); RMT.compSp = c[0]; }
-    const cm = RMT.comp.position; if (cm.distanceTo(new THREE.Vector3(c[1], c[2], c[3])) > 25) cm.set(c[1], c[2], c[3]);
+    if (R.compSp !== c[0]) { if (R.comp) scene.remove(R.comp); R.comp = buildMon(c[0], 'happy'); R.comp.position.set(c[1], c[2], c[3]); scene.add(R.comp); R.compSp = c[0]; }
+    const cm = R.comp.position; if (Math.hypot(cm.x - c[1], cm.z - c[3]) > 25) cm.set(c[1], c[2], c[3]);
     cm.x += (c[1] - cm.x) * k; cm.y += (c[2] - cm.y) * k; cm.z += (c[3] - cm.z) * k;
-    let dy = c[4] - RMT.comp.rotation.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); RMT.comp.rotation.y += dy * k;
-    RMT.comp.visible = true;
-  } else if (RMT.comp) RMT.comp.visible = false;
-  // name tag over their head
-  if (!RMT.tag) { RMT.tag = document.createElement('div'); RMT.tag.className = 'lbl coopTag'; $('labels').appendChild(RMT.tag); }
-  const p = new THREE.Vector3(RMT.x, RMT.y + (RMT.dr ? 3.4 : 2.35), RMT.z).project(camera), far = dist2(RMT.x, RMT.z, P.x, P.z);
-  if (p.z > 1 || Math.abs(p.x) > 1.1 || Math.abs(p.y) > 1.1 || far > 120) RMT.tag.style.display = 'none';
-  else { RMT.tag.style.display = ''; RMT.tag.style.left = (p.x + 1) / 2 * innerWidth + 'px'; RMT.tag.style.top = (1 - p.y) / 2 * innerHeight + 'px'; RMT.tag.innerHTML = `🤝 <b>${RMT.name}</b>${far > 20 ? ` <span style="opacity:.8">${Math.round(far)} m</span>` : ''}`; }
+    let dy = c[4] - R.comp.rotation.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); R.comp.rotation.y += dy * k;
+    R.comp.visible = true;
+  } else if (R.comp) R.comp.visible = false;
+  if (!R.tag) { R.tag = document.createElement('div'); R.tag.className = 'lbl coopTag'; R.tag.style.color = R.col; $('labels').appendChild(R.tag); }
+  const p = new THREE.Vector3(R.x, R.y + (R.dr ? 3.4 : 2.35), R.z).project(camera), far = dist2(R.x, R.z, P.x, P.z);
+  if (p.z > 1 || Math.abs(p.x) > 1.1 || Math.abs(p.y) > 1.1 || far > 120 || state !== 'play') R.tag.style.display = 'none';
+  else { R.tag.style.display = ''; R.tag.style.left = (p.x + 1) / 2 * innerWidth + 'px'; R.tag.style.top = (1 - p.y) / 2 * innerHeight + 'px'; R.tag.innerHTML = `🤝 <b>${R.name}</b>${far > 20 ? ` <span style="opacity:.8">${Math.round(far)} m</span>` : ''}`; }
 }
 function coopMinimap() {
-  if (!RMT.on) return;
-  const [x, y] = clampMM(toMM(RMT.x, RMT.z));
-  mctx.save(); mctx.translate(x, y); mctx.rotate(-RMT.yaw + Math.PI);
-  mctx.fillStyle = '#ff5ad6'; mctx.strokeStyle = '#fff'; mctx.lineWidth = 1.5; mctx.beginPath(); mctx.moveTo(0, -8); mctx.lineTo(6, 6); mctx.lineTo(0, 2.5); mctx.lineTo(-6, 6); mctx.closePath(); mctx.fill(); mctx.stroke();
-  mctx.restore();
-  mctx.font = 'bold 11px Segoe UI Emoji, sans-serif'; mctx.textAlign = 'center'; mctx.textBaseline = 'middle'; mctx.fillText('🤝', x, y - 13);
+  for (const R of REMOTES.values()) {
+    const [x, y] = clampMM(toMM(R.x, R.z));
+    mctx.save(); mctx.translate(x, y); mctx.rotate(-R.yaw + Math.PI);
+    mctx.fillStyle = R.col; mctx.strokeStyle = '#000'; mctx.lineWidth = 1.5; mctx.beginPath(); mctx.moveTo(0, -8); mctx.lineTo(6, 6); mctx.lineTo(0, 2.5); mctx.lineTo(-6, 6); mctx.closePath(); mctx.fill(); mctx.stroke();
+    mctx.restore();
+    mctx.fillStyle = R.col; mctx.font = 'bold 10px Segoe UI'; mctx.textAlign = 'center'; mctx.textBaseline = 'middle'; mctx.fillText(R.name.slice(0, 6), x, y - 13);
+  }
 }
 function goToFriend() {
-  if (!RMT.on) return toast('🤝 Your friend is not in the game right now. When they open Monstermon on their device, you find each other automatically.', 5000);
+  const list = [...REMOTES.values()];
+  if (!list.length) return toast('🤝 Nobody else is in the world right now. When someone opens Monstermon, you find each other automatically.', 5000);
+  const R = list[COOP.goIdx++ % list.length];
   if (RIDE.on) dismount();
-  P.x = RMT.x + 2; P.z = RMT.z + 1.5; P.y = Math.max(height(P.x, P.z), RMT.y); P.vy = 0;
+  P.x = R.x + 2; P.z = R.z + 1.5; P.y = Math.max(height(P.x, P.z), R.y); P.vy = 0;
   if (comp) { comp.x = P.x + 1.5; comp.z = P.z + 1.5; comp.y = height(comp.x, comp.z); }
-  cam.snap = true; spark(P.x, P.y + 1, P.z, '#ff5ad6', 24); SFX.whoosh(); toast(`✨ You jumped next to <b>${RMT.name}</b>!`);
+  cam.snap = true; spark(P.x, P.y + 1, P.z, R.col, 24); SFX.whoosh();
+  toast(`✨ You jumped next to <b>${R.name}</b>!${list.length > 1 ? ' Press again to visit the next friend.' : ''}`);
 }
 // pause menu rows, the status pill and the hooks into the game loop
 PROWS.splice(1, 0,
-  { type: 'toggle', key: 'coop', label: '🤝 Play together (co-op)', opts: [[true, 'On'], [false, 'Off']] },
-  { type: 'btn', label: '🤝 Go to my friend', act: () => { togglePause(false); goToFriend(); } },
-  { type: 'btn', label: '👋 Wave to my friend', act: () => { togglePause(false); if (!coopLinked()) return toast('🤝 Your friend is not in the game right now.'); coopSend({ t: 'wave' }); floatText(P.x, P.y + 2.6, P.z, '👋', '#ffffff'); } });
-{ const _st = setToggle; setToggle = function (key, v) { _st(key, v); if (key === 'coop') { if (v) { coopStart(); toast('🤝 Co-op is ON: when your friend opens the game, you find each other.'); } else { coopStop(); toast('🤝 Co-op is OFF.'); } } }; }
-{ const _rs = renderStats; renderStats = function () { _rs(); if (!coopOn() || state !== 'play') return; const on = RMT.on; $('stats').insertAdjacentHTML('beforeend', `<div class="pill" style="${on ? 'color:#ff8ae6' : 'opacity:.7'}">${on ? `🤝 ${RMT.name} is here` : '🤝 waiting for friend…'}</div>`); }; }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && coopOn() && !(COOP.conn && COOP.conn.open)) coopRetry(300); });
+  { type: 'toggle', key: 'coop', label: '🌍 Shared world (co-op)', opts: [[true, 'On'], [false, 'Off']] },
+  { type: 'btn', label: '🤝 Go to a friend', act: () => { togglePause(false); goToFriend(); } },
+  { type: 'btn', label: '👋 Wave to everybody', act: () => { togglePause(false); if (!coopLinked()) return toast('🤝 Nobody else is in the world right now.'); coopSend({ t: 'wave' }); floatText(P.x, P.y + 2.6, P.z, '👋', '#ffffff'); } });
+{ const _st = setToggle; setToggle = function (key, v) { _st(key, v); if (key === 'coop') { if (v) { coopStart(); toast('🌍 Shared world is ON: everyone who opens the game plays in the same world.'); } else { coopStop(); toast('🌍 Shared world is OFF: you play alone.'); } } }; }
+{ const _rs = renderStats; renderStats = function () { _rs(); if (!coopOn() || state !== 'play') return; const n = REMOTES.size, names = [...REMOTES.values()].map((R) => R.name).join(', ');
+  $('stats').insertAdjacentHTML('beforeend', `<div class="pill" style="${n ? 'color:#ff8ae6' : 'opacity:.7'}">${n ? `🌍 ${n + 1} in the world: ${names}` : COOP.status === 'online' || COOP.role === 'host' ? '🌍 world online · waiting for friends' : '🌍 connecting…'}</div>`); }; }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'visible' || !coopOn()) return; const ok = COOP.role === 'host' ? !!(COOP.peer && !COOP.peer.destroyed && !COOP.peer.disconnected) : !!(COOP.hostConn && COOP.hostConn.open); if (!ok) { lostAll(); coopRetry(300); } });
 addEventListener('beforeunload', () => { try { if (COOP.peer) COOP.peer.destroy(); } catch (e) { } });
-window.__coop = { COOP, RMT, get linked() { return coopLinked(); } };
+window.__coop = { COOP, REMOTES, get linked() { return coopLinked(); } };
 
 // ====================================================================== boot
 window.__wf = { get save() { return save; }, get comp() { return comp; }, enemies, WORLD, P, get boss() { return boss; } };   // read-only debug handle
