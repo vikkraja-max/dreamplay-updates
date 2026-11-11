@@ -112,6 +112,7 @@
   .dexc { background: var(--panel2); border: 2px solid var(--line); border-radius: 14px; padding: 8px; } .dexc.caught { border-color: var(--green); } .dexc.seen { border-color: var(--blue); }
   .dexc canvas { width: 100%; height: auto; border-radius: 10px; background: radial-gradient(ellipse at 50% 40%, #1d3a6a, #0a1222 75%); } .dexc .ds { font-size: 12px; color: var(--gold); } .dexc .dd { font-size: 12px; color: #a9bad8; margin-top: 3px; }
   #evo { position: fixed; inset: 0; z-index: 12; pointer-events: none; background: radial-gradient(circle, rgba(255,255,255,.95), rgba(180,140,255,.4) 40%, rgba(0,0,0,0) 70%); opacity: 0; transition: opacity .5s; }
+.lbl.coopTag{color:#ff8ae6;font-size:15px;text-shadow:0 1px 3px #000}
 </style>
 <style id="modern-ui">
   /* ---------- Wildfold modern UI: dark glass, glowing fold-energy edges, gems and smooth motion ---------- */
@@ -209,6 +210,7 @@
 <div id="dex" class="overlay hidden"><div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><h2>📖 Monstermon Dex</h2><div><button class="btn" id="dex3d">🌀 3D gallery</button> <button class="btn" id="dexClose">✖ Close</button></div></div><div id="dexHead" style="color:var(--muted)"></div><div id="dexGrid" class="dexgrid"></div></div></div>
 <div id="evo"></div>
 <div class="fade" id="fade"></div>
+<script src="lib/peerjs.min.js"></script>
 <script type="importmap">{ "imports": { "three": "./lib/three.module.min.js", "three/addons/": "./lib/addons/" } }</script>
 <script type="module" src="adventure.js"></script>
 </body>

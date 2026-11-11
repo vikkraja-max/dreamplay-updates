@@ -1,9 +1,7 @@
 {
-  "version": "1.0.3",
+  "version": "1.0.4",
   "notes": [
-    "Skyfang the dragon: fly over the whole world (G or the \ud83d\udc09 button)",
-    "The world is 3x bigger: 4 new lands, stronger monsters the farther you go",
-    "Treasure chests with math puzzles: clothes, accessories, gift Monstermon and Elevation Cards"
+    "Co-op! Play together on two devices: you find each other automatically, see each other and your Monstermon, fight the same monsters, and a TEAM CATCH gives you both the monster."
   ],
-  "size": 574813
+  "size": 604892
 }
